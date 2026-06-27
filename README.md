@@ -59,6 +59,13 @@ uv run python -m autotune.train_sft --iters 50              # Nudge #1 (LoRA SFT
 uv run python -m autotune.generate --prompt-beat route1     # ask the trained model for a genome
 ```
 
+## Integration with pokemon-kafka
+
+The loop runs pokemon-kafka as its environment and feeds what it learns back into how the agent
+plays, at three levels (apply the best genome, persist nudges into gameplay, evolve with the
+local model). See [docs/pokemon-kafka-integration.md](docs/pokemon-kafka-integration.md) for the
+seams, the data contract, and the end-to-end workflow.
+
 ## Layout
 | File | Role |
 |---|---|
