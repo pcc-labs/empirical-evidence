@@ -16,6 +16,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from autotune.brock import brock_fitness_reward
 from autotune.genome import DEFAULT_PARAMS, PARAM_BOUNDS, clamp_params
 
 # The battle-relevant knobs (the only params this scenario tunes).
@@ -138,4 +139,10 @@ SCENARIOS: dict[str, Scenario] = {
         "battle", bad_battle_genome, mutate_battle_params, battle_reward, 1, 300, BATTLE_PARAM_KEYS
     ),
     "nav": Scenario("nav", bad_nav_genome, mutate_nav_params, nav_reward, 0, 800, NAV_PARAM_KEYS),
+    # Brock (gym 1): tune battle params against a captured pre-Brock state, reward = beat Brock
+    # fast. Uses the coarse fitness-only proxy here; the in-loop path uses verify_brock (events).
+    "brock": Scenario(
+        "brock", bad_battle_genome, mutate_battle_params, brock_fitness_reward, 1, 300,
+        BATTLE_PARAM_KEYS,
+    ),
 }

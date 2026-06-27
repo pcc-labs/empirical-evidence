@@ -68,6 +68,15 @@ def _summarize_generation(gen: int, verdicts: list, story: Story) -> None:
 
 def run_loop(cfg: Config) -> dict:
     """Run the full loop. Returns a small summary dict."""
+    if cfg.loop.mode == "brock":
+        from autotune.brock_loop import run_brock_loop
+
+        return run_brock_loop(
+            cfg,
+            generations=cfg.loop.generations,
+            seed=cfg.loop.seed,
+        )
+
     story = load_story(cfg.env.routes_json, cfg.story.name, cfg.story.target_map_id)
     loop = cfg.loop
     notes_path = _resolve_notes_path(cfg)
@@ -151,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n", type=int, default=None, help="rollouts per generation")
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--nudge", choices=["sft", "steer", "both"], default=None)
+    parser.add_argument("--mode", choices=["story", "brock"], default=None)
     args = parser.parse_args(argv)
 
     cfg = load_config()
@@ -163,10 +173,19 @@ def main(argv: list[str] | None = None) -> int:
         overrides["max_turns"] = args.max_turns
     if args.nudge is not None:
         overrides["nudge"] = args.nudge
+    if args.mode is not None:
+        overrides["mode"] = args.mode
     if overrides:
         cfg = cfg.with_loop(**overrides)
 
     summary = run_loop(cfg)
+    if cfg.loop.mode == "brock":
+        print(
+            f"[loop] done (brock): won={summary['brock_won']} turns={summary['brock_turns']} "
+            f"best_level={summary['best_level']} evals={summary['evaluations']}"
+        )
+        print("[loop] best config -> out/best_brock.json (apply with: scripts/apply_brock.sh)")
+        return 0
     print(
         f"[loop] done: {summary['generations_run']} generations, "
         f"reached={summary['reached_target']}"

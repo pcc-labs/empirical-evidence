@@ -143,3 +143,48 @@ def build_story(name: str, target_map_id: int, routes: dict[int, dict]) -> Story
 def load_story(routes_json: Path, name: str = "route1", target_map_id: int = 1) -> Story:
     """Convenience loader: read routes.json and build the default story."""
     return build_story(name=name, target_map_id=target_map_id, routes=load_routes(routes_json))
+
+
+def derive_story_from_run(
+    visited_maps: list[int],
+    name: str = "observed",
+    routes: dict[int, dict] | None = None,
+    target_map_id: int | None = None,
+) -> Story:
+    """Build a Story from the maps a run *actually* visited, in first-visit order.
+
+    Where ``build_story`` asserts the canonical ``MAP_PROGRESS`` ordering, this derives the
+    story from observed telemetry — so the enforced sequence is what the agent did, not a
+    hardcoded route (the saturation trap from ``docs/experiment-findings.md``). Off-canonical
+    maps (e.g. gym interiors) get progress rank 0 but still become beats. ``target_map_id``
+    defaults to the last beat reached.
+    """
+    routes = routes or {}
+    seen: list[int] = []
+    for map_id in visited_maps:
+        if isinstance(map_id, int) and map_id not in seen:
+            seen.append(map_id)
+    if not seen:
+        raise ValueError("no maps visited; cannot derive a story")
+
+    beats: list[StoryBeat] = []
+    for ordinal, map_id in enumerate(seen, start=1):
+        route = routes.get(map_id, {})
+        beat_name = route.get("name") or _FALLBACK_NAMES.get(map_id, f"Map {map_id}")
+        waypoints = tuple(route.get("waypoints", ()) or ())
+        beats.append(
+            StoryBeat(
+                beat_id=ordinal,
+                map_id=map_id,
+                progress=MAP_PROGRESS.get(map_id, 0),
+                name=beat_name,
+                waypoints=waypoints,
+                milestone=_MILESTONES.get(map_id),
+            )
+        )
+
+    if target_map_id is None:
+        target_ordinal = len(beats)
+    else:
+        target_ordinal = next((b.beat_id for b in beats if b.map_id == target_map_id), len(beats))
+    return Story(name=name, beats=tuple(beats), target_beat_id=target_ordinal)

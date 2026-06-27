@@ -189,10 +189,13 @@ class LoopConfig:
     nudge: str = "both"  # "sft" | "steer" | "both"
     concurrency: int = 3
     seed: int = 42
+    mode: str = "story"  # "story" (route1 per-beat) | "brock" (fewest-turns gym fight)
 
     def validate(self) -> LoopConfig:
         if self.nudge not in {"sft", "steer", "both"}:
             raise ValueError(f"nudge must be sft|steer|both, got {self.nudge!r}")
+        if self.mode not in {"story", "brock"}:
+            raise ValueError(f"mode must be story|brock, got {self.mode!r}")
         if self.n_rollouts < 1:
             raise ValueError("n_rollouts must be >= 1")
         return self

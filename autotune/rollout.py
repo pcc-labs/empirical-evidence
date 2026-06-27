@@ -47,6 +47,7 @@ def _agent_command(
     max_turns: int,
     load_state: str | None = None,
     battle_limit: int = 0,
+    save_state_on_trainer: str | None = None,
 ) -> list[str]:
     cmd = [
         "uv",
@@ -67,6 +68,8 @@ def _agent_command(
         cmd += ["--battle-limit", str(battle_limit)]
     if load_state:
         cmd += ["--load-state", str(Path(load_state).resolve())]
+    if save_state_on_trainer:
+        cmd += ["--save-state-on-trainer", save_state_on_trainer]
     return cmd
 
 
@@ -78,6 +81,7 @@ def run_one(
     work_root: Path,
     load_state: str | None = None,
     battle_limit: int = 0,
+    save_state_on_trainer: str | None = None,
 ) -> Rollout:
     """Run a single rollout to completion and load its artifacts."""
     if cfg.env.rom_path is None:
@@ -92,7 +96,14 @@ def run_one(
     env["EVOLVE_PARAMS"] = json.dumps(params)
 
     cmd = _agent_command(
-        cfg, cfg.env.rom_path, fitness_path, telemetry_dir, max_turns, load_state, battle_limit
+        cfg,
+        cfg.env.rom_path,
+        fitness_path,
+        telemetry_dir,
+        max_turns,
+        load_state,
+        battle_limit,
+        save_state_on_trainer,
     )
     rollout = Rollout(index=index, params=params, rollout_dir=rollout_dir)
     try:
