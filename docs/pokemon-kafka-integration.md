@@ -145,6 +145,18 @@ uv run scripts/evolve.py rom/*.gb --llm local
 | `scripts/agent.py` | Seed `evolve_params` from the notes genome at startup (L2). |
 | `scripts/evolve.py` | `--llm local` uses autotune's model as the proposer (L3). |
 
+## Design modes: frozen (current) vs live (future)
+
+**Frozen (current, default).** autotune tunes offline. It runs the agent many times, scores each
+run, and writes a genome into `notes.md` and `out/best_genome.json`. The speedrun then loads that
+genome once at startup and plays with no autotune code running. The genome crosses between phases
+as data, not as running code. This is the only mode that exists today.
+
+**Live (future, not built).** autotune would steer the agent during the speedrun, updating its
+behavior as it plays rather than only at startup. This is a different, online design. The frozen
+path stays the default; live steering would be opt-in. Tracked in
+[issue #2](https://github.com/pcc-labs/autotune/issues/2).
+
 ## Status
 
 SFT-first MVP. The reward is binary per-beat `pass=1 / fail=0`, consumed by rejection-sampling
