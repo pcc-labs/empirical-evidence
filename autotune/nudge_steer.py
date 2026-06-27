@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +123,30 @@ def propose_next_genome(
         if parsed is not None:
             return parsed
     return _heuristic_next(winner_params, verdict, seed)
+
+
+# Machine-readable genome block embedded in notes.md. pokemon-kafka's agent parses the JSON
+# between these markers and uses it as its EVOLVE_PARAMS baseline (env still overrides).
+_GENOME_BEGIN = "<!-- autotune:genome"
+_GENOME_END = "-->"
+_GENOME_BLOCK_RE = re.compile(
+    re.escape(_GENOME_BEGIN) + r".*?" + re.escape(_GENOME_END) + r"\n?",
+    re.DOTALL,
+)
+
+
+def render_genome_block(genome: dict) -> str:
+    """Render the machine-readable genome block written into notes.md."""
+    return f"{_GENOME_BEGIN}\n{json.dumps(genome)}\n{_GENOME_END}\n"
+
+
+def write_genome_block(notes_path: Path, genome: dict) -> None:
+    """Write/replace the autotune genome block in notes.md (creating the file if needed)."""
+    path = Path(notes_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8") if path.exists() else "# Agent Notes\n"
+    stripped = _GENOME_BLOCK_RE.sub("", existing).rstrip("\n")
+    path.write_text(stripped + "\n\n" + render_genome_block(genome), encoding="utf-8")
 
 
 def write_nudge_note(

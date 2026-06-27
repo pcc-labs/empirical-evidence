@@ -43,6 +43,7 @@ omit = [
     "autotune/train_sft.py",
     "autotune/generate.py",
     "autotune/loop.py",
+    "autotune/experiment.py",
 ]
 
 [tool.coverage.report]

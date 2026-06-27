@@ -1,7 +1,7 @@
 # autotune
 
-A local **Try → Check → Reward → Nudge** training loop — running entirely on Apple Silicon via
-[MLX](https://github.com/ml-explore/mlx-lm) — that **enforces a story** in the
+A local **Try → Check → Reward → Nudge** training loop that runs entirely on Apple Silicon via
+[MLX](https://github.com/ml-explore/mlx-lm), and **enforces a story** in the
 [pokemon-kafka](../pokemon-kafka) agent.
 
 ```
@@ -28,7 +28,7 @@ progression, assembled from concepts that already exist there:
 - per-beat waypoints/names = `references/routes.json`.
 
 `verifier.py` turns each rollout's telemetry into a **per-beat pass=1/fail=0** reward against that
-ordered story — a story-shaped, verifiable signal, not a scalar fitness blob.
+ordered story: a story-shaped, verifiable signal, not a scalar fitness blob.
 
 ## Two Nudge backends (run either or both)
 
@@ -38,7 +38,7 @@ ordered story — a story-shaped, verifiable signal, not a scalar fitness blob.
 | `steer` | Mutates the agent's `EVOLVE_PARAMS` genome from what passed and writes a nudge to `notes.md` (no weight training). |
 | `both`  | Both, sharing one loop (default). |
 
-pokemon-kafka is driven through its already-wired `EVOLVE_PARAMS` seam — **no pokemon-kafka edits
+pokemon-kafka is driven through its already-wired `EVOLVE_PARAMS` seam, so **no pokemon-kafka edits
 are required.**
 
 ## Quickstart
@@ -58,6 +58,16 @@ uv run python -m autotune.rollout --n 1 --max-turns 500     # Try (produces tele
 uv run python -m autotune.train_sft --iters 50              # Nudge #1 (LoRA SFT) on existing data/sft
 uv run python -m autotune.generate --prompt-beat route1     # ask the trained model for a genome
 ```
+
+## Integration with pokemon-kafka
+
+The loop runs pokemon-kafka as its environment and feeds what it learns back into how the agent
+plays, at three levels (apply the best genome, persist nudges into gameplay, evolve with the
+local model). See [docs/pokemon-kafka-integration.md](docs/pokemon-kafka-integration.md) for the
+seams, the data contract, and the end-to-end workflow.
+
+For results from the constrained learning experiments (and why tuning the 12-parameter genome
+saturates on early-game tasks), see [docs/experiment-findings.md](docs/experiment-findings.md).
 
 ## Layout
 | File | Role |
