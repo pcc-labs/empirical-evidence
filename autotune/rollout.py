@@ -40,9 +40,15 @@ class Rollout:
 
 
 def _agent_command(
-    cfg: Config, rom: Path, fitness_path: Path, telemetry_dir: Path, max_turns: int
+    cfg: Config,
+    rom: Path,
+    fitness_path: Path,
+    telemetry_dir: Path,
+    max_turns: int,
+    load_state: str | None = None,
+    battle_limit: int = 0,
 ) -> list[str]:
-    return [
+    cmd = [
         "uv",
         "run",
         "python",
@@ -57,9 +63,22 @@ def _agent_command(
         "--config",
         "",  # avoid depending on a local config.toml; JSONL telemetry still writes
     ]
+    if battle_limit:
+        cmd += ["--battle-limit", str(battle_limit)]
+    if load_state:
+        cmd += ["--load-state", str(Path(load_state).resolve())]
+    return cmd
 
 
-def run_one(cfg: Config, params: dict, index: int, max_turns: int, work_root: Path) -> Rollout:
+def run_one(
+    cfg: Config,
+    params: dict,
+    index: int,
+    max_turns: int,
+    work_root: Path,
+    load_state: str | None = None,
+    battle_limit: int = 0,
+) -> Rollout:
     """Run a single rollout to completion and load its artifacts."""
     if cfg.env.rom_path is None:
         raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM to run rollouts.")
@@ -72,7 +91,9 @@ def run_one(cfg: Config, params: dict, index: int, max_turns: int, work_root: Pa
     env = os.environ.copy()
     env["EVOLVE_PARAMS"] = json.dumps(params)
 
-    cmd = _agent_command(cfg, cfg.env.rom_path, fitness_path, telemetry_dir, max_turns)
+    cmd = _agent_command(
+        cfg, cfg.env.rom_path, fitness_path, telemetry_dir, max_turns, load_state, battle_limit
+    )
     rollout = Rollout(index=index, params=params, rollout_dir=rollout_dir)
     try:
         proc = subprocess.run(
@@ -97,13 +118,15 @@ def run_batch(
     max_turns: int,
     work_root: Path,
     concurrency: int = 3,
+    load_state: str | None = None,
+    battle_limit: int = 0,
 ) -> list[Rollout]:
     """Run one rollout per genome in ``params_list``, in parallel. Order preserved."""
     work_root.mkdir(parents=True, exist_ok=True)
     results: list[Rollout | None] = [None] * len(params_list)
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         futures = {
-            pool.submit(run_one, cfg, params, i, max_turns, work_root): i
+            pool.submit(run_one, cfg, params, i, max_turns, work_root, load_state, battle_limit): i
             for i, params in enumerate(params_list)
         }
         for future in futures:

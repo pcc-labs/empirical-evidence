@@ -19,3 +19,12 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# ROM (copyrighted) — copied in by setup_from_pk.sh
+rom/
+*.gb
+*.gb.ram
+
+# PyBoy save states (derived from the ROM)
+states/
+*.state

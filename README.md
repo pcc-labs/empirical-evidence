@@ -66,6 +66,9 @@ plays, at three levels (apply the best genome, persist nudges into gameplay, evo
 local model). See [docs/pokemon-kafka-integration.md](docs/pokemon-kafka-integration.md) for the
 seams, the data contract, and the end-to-end workflow.
 
+For results from the constrained learning experiments (and why tuning the 12-parameter genome
+saturates on early-game tasks), see [docs/experiment-findings.md](docs/experiment-findings.md).
+
 ## Layout
 | File | Role |
 |---|---|
