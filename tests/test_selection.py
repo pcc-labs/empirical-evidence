@@ -1,4 +1,9 @@
-from autotune.selection import best_verdict, rank_indices, select_winner_indices
+from autotune.selection import (
+    best_verdict,
+    is_verdict_better,
+    rank_indices,
+    select_winner_indices,
+)
 from tests.conftest import make_verdict
 
 
@@ -37,3 +42,12 @@ def test_select_winners_empty():
 def test_best_verdict_picks_top():
     verdicts = [make_verdict(story_reward=1), make_verdict(story_reward=4)]
     assert best_verdict(verdicts).story_reward == 4
+
+
+def test_is_verdict_better():
+    incumbent = make_verdict(story_reward=4, score=100)
+    assert is_verdict_better(make_verdict(story_reward=5, score=1), incumbent) is True
+    assert is_verdict_better(make_verdict(story_reward=4, score=200), incumbent) is True
+    assert is_verdict_better(make_verdict(story_reward=4, score=50), incumbent) is False
+    # None incumbent is always beaten.
+    assert is_verdict_better(make_verdict(story_reward=0), None) is True

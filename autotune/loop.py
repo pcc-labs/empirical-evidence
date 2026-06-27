@@ -17,7 +17,10 @@ IO/orchestration wrapper — exercised by the smoke run, not unit tests.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -26,9 +29,31 @@ from autotune.config import Config, load_config
 from autotune.generate import make_proposer
 from autotune.genome import base_genome
 from autotune.rollout import run_batch
-from autotune.selection import best_verdict, select_winner_indices
+from autotune.selection import best_verdict, is_verdict_better, select_winner_indices
 from autotune.story import Story, load_story
 from autotune.verifier import verify
+
+
+def _resolve_notes_path(cfg: Config) -> Path:
+    """Where steer nudges + the genome block are written.
+
+    Defaults to pokemon-kafka's own notes.md so the agent can consume them (L2);
+    override with AUTOTUNE_NOTES_PATH (e.g. to keep them inside autotune's out/).
+    """
+    override = os.environ.get("AUTOTUNE_NOTES_PATH")
+    return Path(override) if override else cfg.env.pokemon_kafka_dir / "notes.md"
+
+
+def _write_best_genome(path: Path, genome: dict, verdict) -> None:
+    """Persist the best genome found so far (L1) for applying back to pokemon-kafka."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "genome": genome,
+        "story_reward": verdict.story_reward,
+        "furthest_beat": verdict.furthest_beat_name,
+        "reached_target": verdict.reached_target,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def _summarize_generation(gen: int, verdicts: list, story: Story) -> None:
@@ -45,12 +70,15 @@ def run_loop(cfg: Config) -> dict:
     """Run the full loop. Returns a small summary dict."""
     story = load_story(cfg.env.routes_json, cfg.story.name, cfg.story.target_map_id)
     loop = cfg.loop
-    notes_path = cfg.storage.out_dir / "notes.md"
+    notes_path = _resolve_notes_path(cfg)
+    best_genome_path = cfg.storage.out_dir / "best_genome.json"
 
     genome = base_genome()
     sft_buffer: list[nudge_sft.Winner] = []
     history: list[dict] = []
     reached = False
+    best_overall = None
+    best_overall_params = genome
 
     for gen in range(loop.generations):
         # 1. Try — N stochastic rollouts of the current genome.
@@ -68,9 +96,15 @@ def run_loop(cfg: Config) -> dict:
         _summarize_generation(gen, verdicts, story)
         winner_idx = select_winner_indices(verdicts)
         best = best_verdict(verdicts)
+        best_params = rollouts[winner_idx[0]].params if winner_idx else genome
         history.append(
             {"generation": gen, "reward": best.story_reward, "furthest": best.furthest_beat_name}
         )
+
+        # L1: track the best genome across all generations and persist it.
+        if is_verdict_better(best, best_overall):
+            best_overall, best_overall_params = best, best_params
+            _write_best_genome(best_genome_path, best_overall_params, best_overall)
 
         if best.reached_target:
             print(f"[gen {gen}] story enforced — reached target beat '{best.furthest_beat_name}'.")
@@ -78,7 +112,6 @@ def run_loop(cfg: Config) -> dict:
             break
 
         winners = [nudge_sft.Winner(rollouts[i].params, verdicts[i]) for i in winner_idx]
-        best_params = rollouts[winner_idx[0]].params if winner_idx else genome
 
         # 4. Nudge.
         proposer = None
@@ -92,6 +125,8 @@ def run_loop(cfg: Config) -> dict:
                     proposer = make_proposer(cfg)
         if loop.nudge in ("steer", "both"):
             line = nudge_steer.write_nudge_note(notes_path, best, best_params)
+            # L2: write the machine-readable genome block pokemon-kafka reads at startup.
+            nudge_steer.write_genome_block(notes_path, best_params)
             print(f"[gen {gen}] nudge -> {line}")
 
         # Propose the next genome (model if trained, else heuristic/Claude).
@@ -104,6 +139,8 @@ def run_loop(cfg: Config) -> dict:
         "reached_target": reached,
         "generations_run": len(history),
         "history": history,
+        "best_genome": best_overall_params,
+        "best_genome_path": str(best_genome_path),
     }
 
 
@@ -134,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         f"[loop] done: {summary['generations_run']} generations, "
         f"reached={summary['reached_target']}"
     )
+    print(f"[loop] best genome -> {summary['best_genome_path']}")
+    print("[loop] apply it to pokemon-kafka with: scripts/apply_genome.sh")
     return 0
 
 

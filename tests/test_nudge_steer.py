@@ -4,6 +4,8 @@ from autotune.nudge_steer import (
     genome_diffs,
     parse_genome_response,
     propose_next_genome,
+    render_genome_block,
+    write_genome_block,
     write_nudge_note,
 )
 from tests.conftest import make_verdict
@@ -87,3 +89,33 @@ def test_write_nudge_note_appends(tmp_path):
     # Appends rather than overwrites.
     write_nudge_note(notes, v, g, stamp="2026-06-27")
     assert len(notes.read_text().strip().splitlines()) == 2
+
+
+def test_render_genome_block_roundtrips():
+    block = render_genome_block({"stuck_threshold": 8})
+    assert "autotune:genome" in block
+    assert '"stuck_threshold": 8' in block
+
+
+def test_write_genome_block_creates_and_replaces(tmp_path):
+    notes = tmp_path / "notes.md"
+    g1 = base_genome()
+    g1["door_cooldown"] = 10
+    write_genome_block(notes, g1)
+    assert '"door_cooldown": 10' in notes.read_text()
+
+    # Writing again replaces the block rather than appending a second one.
+    g2 = base_genome()
+    g2["door_cooldown"] = 5
+    write_genome_block(notes, g2)
+    text = notes.read_text()
+    assert text.count("autotune:genome") == 1
+    assert '"door_cooldown": 5' in text
+    assert '"door_cooldown": 10' not in text
+
+
+def test_write_genome_block_preserves_other_notes(tmp_path):
+    notes = tmp_path / "notes.md"
+    notes.write_text("# Agent Notes\n- keep this line\n")
+    write_genome_block(notes, base_genome())
+    assert "keep this line" in notes.read_text()

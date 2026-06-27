@@ -39,3 +39,13 @@ def best_verdict(verdicts: list[RolloutVerdict]) -> RolloutVerdict | None:
     """The single best verdict in the group, or None if empty."""
     order = rank_indices(verdicts)
     return verdicts[order[0]] if order else None
+
+
+def is_verdict_better(candidate: RolloutVerdict, incumbent: RolloutVerdict | None) -> bool:
+    """True if ``candidate`` beats ``incumbent`` (higher story_reward, then score).
+
+    A ``None`` incumbent is always beaten — used to track the best genome across generations.
+    """
+    if incumbent is None:
+        return True
+    return (candidate.story_reward, candidate.score) > (incumbent.story_reward, incumbent.score)
