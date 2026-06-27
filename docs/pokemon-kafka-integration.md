@@ -114,17 +114,17 @@ is a teacher to student handoff: pay for Claude once to discover good behavior, 
 the local model, then run on-device for free.
 
 ```
-PHASE 1 — BOOTSTRAP (Claude teaches)
+PHASE 1: BOOTSTRAP (Claude teaches)
   TRY -> CHECK -> REWARD -> NUDGE
                            proposer = Claude (ANTHROPIC_API_KEY, $ per generation)
                            winning genomes -> SFT data (Claude-quality)
                            train the local smollm3 on them
 
-PHASE 2 — HANDOFF (the model has learned the winning region)
+PHASE 2: HANDOFF (the model has learned the winning region)
   once the adapter proposes winning genomes on its own:
        drop Claude        local smollm3 takes over
 
-PHASE 3 — AUTONOMOUS (MLX moving forward)
+PHASE 3: AUTONOMOUS (MLX moving forward)
   TRY -> CHECK -> REWARD -> NUDGE
                            proposer = local smollm3 (free, on-device, private)
                            keeps training on new winners, no API key again
