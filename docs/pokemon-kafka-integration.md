@@ -107,6 +107,48 @@ uv run scripts/evolve.py rom/*.gb --llm local
 `mlx_lm generate`. No API key is needed. The default `--llm anthropic` and `--no-llm` behaviors
 are unchanged.
 
+## Bootstrapping the proposer: Claude teaches, local MLX takes over
+
+The proposer (the thing that decides each genome) is a swappable seam. The intended progression
+is a teacher to student handoff: pay for Claude once to discover good behavior, distill it into
+the local model, then run on-device for free.
+
+```
+PHASE 1 — BOOTSTRAP (Claude teaches)
+  TRY -> CHECK -> REWARD -> NUDGE
+                           proposer = Claude (ANTHROPIC_API_KEY, $ per generation)
+                           winning genomes -> SFT data (Claude-quality)
+                           train the local smollm3 on them
+
+PHASE 2 — HANDOFF (the model has learned the winning region)
+  once the adapter proposes winning genomes on its own:
+       drop Claude        local smollm3 takes over
+
+PHASE 3 — AUTONOMOUS (MLX moving forward)
+  TRY -> CHECK -> REWARD -> NUDGE
+                           proposer = local smollm3 (free, on-device, private)
+                           keeps training on new winners, no API key again
+```
+
+Why this works: `nudge_sft` labels each training example with the genome that *won*, regardless
+of who proposed it. So a winning Claude proposal becomes a training target for the local model.
+Over a bootstrap period the local model distills Claude's mutation policy, then replaces it.
+
+What this buys you: you pay the API only during Phase 1, the data and model stay on your machine,
+and the local model specializes to your game rather than reasoning about it cold each time.
+
+The cold-start caveat: the local model only learns something useful when the reward is not
+saturated. If every rollout scores the same (as on the already-solved Route 1), the SFT dataset
+carries no signal and the model learns nothing. Phase 1 needs both a real gap and Claude's
+guidance to produce winners worth distilling.
+
+Status of this path:
+- **Exists:** the local proposer (`generate.make_proposer`, pk `--llm local`) and the distillation
+  training (`nudge_sft` + `train_sft`).
+- **Planned:** an in-loop Claude proposer plus a handoff schedule in `loop.py`
+  (`--proposer claude|local|auto`, where `auto` uses Claude for the first K generations, then
+  flips to the local model once the adapter is trained).
+
 ## End-to-end workflow
 
 ```bash
