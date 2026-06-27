@@ -1,0 +1,50 @@
+[project]
+name = "autotune"
+version = "0.1.0"
+description = "A local Try -> Check -> Reward -> Nudge loop (MLX on Apple Silicon) that enforces a story in the pokemon-kafka agent."
+requires-python = ">=3.11"
+dependencies = [
+    "mlx-lm>=0.21",
+    "transformers>=4.45",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-cov",
+    "ipython",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["autotune"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["autotune"]
+omit = [
+    # Subprocess / MLX / network wrappers are exercised by the smoke run, not unit tests.
+    "autotune/rollout.py",
+    "autotune/train_sft.py",
+    "autotune/generate.py",
+    "autotune/loop.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
