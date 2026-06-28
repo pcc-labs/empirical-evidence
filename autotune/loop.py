@@ -124,14 +124,24 @@ def run_loop(cfg: Config) -> dict:
 
         # 4. Nudge.
         proposer = None
+        # A local Ollama model can take the teacher seat — runs the loop with no trained weights
+        # (and no base-model download). It generates SFT data but we don't train on it here.
+        if cfg.proposer == "ollama":
+            from autotune.ollama_proposer import make_ollama_proposer
+
+            proposer = make_ollama_proposer(cfg)
         if loop.nudge in ("sft", "both"):
             sft_buffer.extend(winners)
             examples = nudge_sft.build_dataset(sft_buffer, story)
             if examples:
                 nudge_sft.write_sft_data(cfg.storage.sft_dir, examples, seed=loop.seed)
-                train_sft.train(cfg, cfg.storage.sft_dir, iters=cfg.profile.iters)
-                if cfg.storage.adapter_dir.exists():
-                    proposer = make_proposer(cfg)
+                if cfg.proposer != "ollama":
+                    # iters: MLX profiles carry it; CUDA profiles use epochs (iters=None).
+                    train_sft.train(
+                        cfg, cfg.storage.sft_dir, iters=getattr(cfg.profile, "iters", None)
+                    )
+                    if cfg.storage.adapter_dir.exists():
+                        proposer = make_proposer(cfg)
         if loop.nudge in ("steer", "both"):
             line = nudge_steer.write_nudge_note(notes_path, best, best_params)
             # L2: write the machine-readable genome block pokemon-kafka reads at startup.
@@ -161,8 +171,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--nudge", choices=["sft", "steer", "both"], default=None)
     parser.add_argument("--mode", choices=["story", "brock"], default=None)
+    parser.add_argument(
+        "--proposer",
+        choices=["trained", "ollama", "heuristic"],
+        default=None,
+        help="who proposes the next genome (overrides AUTOTUNE_PROPOSER)",
+    )
     args = parser.parse_args(argv)
 
+    if args.proposer is not None:
+        os.environ["AUTOTUNE_PROPOSER"] = args.proposer
     cfg = load_config()
     overrides = {}
     if args.generations is not None:

@@ -287,6 +287,41 @@ def resolve_model(backend: str | None = None) -> ModelConfig:
 
 
 # ---------------------------------------------------------------------------
+# Proposer selection (who proposes the next genome in the Nudge step)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OllamaConfig:
+    """A local Ollama model used as the *teacher* proposer (inference-only, no training)."""
+
+    model: str = "qwen3:8b"
+    host: str = "http://localhost:11434"
+
+
+def resolve_ollama() -> OllamaConfig:
+    return OllamaConfig(
+        model=os.environ.get("AUTOTUNE_OLLAMA_MODEL", "qwen3:8b"),
+        host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+    )
+
+
+def resolve_proposer() -> str:
+    """Who proposes the next genome: ``trained`` (the SFT adapter), ``ollama``, or ``heuristic``.
+
+    ``trained`` is the default — use the locally-trained adapter when one exists, else the
+    deterministic heuristic. ``ollama`` puts a local Ollama model in the teacher seat so the loop
+    runs end-to-end without any trained weights (and without the base-model download).
+    """
+    value = os.environ.get("AUTOTUNE_PROPOSER", "trained")
+    if value not in {"trained", "ollama", "heuristic"}:
+        raise ValueError(
+            f"Unknown AUTOTUNE_PROPOSER={value!r}; choose from ['trained', 'ollama', 'heuristic']"
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Story + loop
 # ---------------------------------------------------------------------------
 
@@ -339,6 +374,8 @@ class Config:
     env: EnvConfig = field(default_factory=resolve_env)
     profile: GPUProfile | MacProfile = field(default_factory=resolve_profile)
     model: ModelConfig = field(default_factory=resolve_model)
+    proposer: str = field(default_factory=resolve_proposer)
+    ollama: OllamaConfig = field(default_factory=resolve_ollama)
     story: StoryConfig = field(default_factory=resolve_story)
     loop: LoopConfig = field(default_factory=LoopConfig)
 
