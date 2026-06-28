@@ -48,6 +48,8 @@ def _agent_command(
     load_state: str | None = None,
     battle_limit: int = 0,
     save_state_on_trainer: str | None = None,
+    worldmap_file: str | None = None,
+    save_state_every: str | None = None,
 ) -> list[str]:
     cmd = [
         "uv",
@@ -70,6 +72,10 @@ def _agent_command(
         cmd += ["--load-state", str(Path(load_state).resolve())]
     if save_state_on_trainer:
         cmd += ["--save-state-on-trainer", save_state_on_trainer]
+    if worldmap_file:
+        cmd += ["--worldmap-file", str(Path(worldmap_file).resolve())]
+    if save_state_every:
+        cmd += ["--save-state-every", save_state_every]
     return cmd
 
 
@@ -82,6 +88,8 @@ def run_one(
     load_state: str | None = None,
     battle_limit: int = 0,
     save_state_on_trainer: str | None = None,
+    worldmap_file: str | None = None,
+    save_state_every: str | None = None,
 ) -> Rollout:
     """Run a single rollout to completion and load its artifacts."""
     if cfg.env.rom_path is None:
@@ -104,6 +112,8 @@ def run_one(
         load_state,
         battle_limit,
         save_state_on_trainer,
+        worldmap_file,
+        save_state_every,
     )
     rollout = Rollout(index=index, params=params, rollout_dir=rollout_dir)
     try:
