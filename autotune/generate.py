@@ -89,12 +89,18 @@ def _generate_cuda(cfg: Config, prompt: str, adapter_path: Path) -> str:  # prag
 
     model, tokenizer = _load_cuda(cfg, adapter_path)
     messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}]
-    inputs = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, enable_thinking=False, return_tensors="pt"
-    ).to(model.device)
+    enc = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        enable_thinking=False,
+        return_tensors="pt",
+        return_dict=True,
+    )
+    enc = {k: v.to(model.device) for k, v in enc.items()}
+    input_len = enc["input_ids"].shape[1]
     with torch.no_grad():
-        out = model.generate(inputs, max_new_tokens=_MAX_TOKENS, do_sample=False)
-    text = tokenizer.decode(out[0][inputs.shape[1] :], skip_special_tokens=True)
+        out = model.generate(**enc, max_new_tokens=_MAX_TOKENS, do_sample=False)
+    text = tokenizer.decode(out[0][input_len:], skip_special_tokens=True)
     return _THINK_RE.sub("", text).strip()
 
 
