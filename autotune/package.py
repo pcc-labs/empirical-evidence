@@ -1,10 +1,11 @@
-"""Package the trained adapter into a standalone, versioned MLX model — gated on the eval passing.
+"""Package the trained adapter into a standalone, versioned model — gated on the eval passing.
 
 Fuses the LoRA adapter (``out/sft``) into the base model so the proposer can run without the
-adapter side-loaded, optionally quantizes it to fit the unified-memory budget, and writes a
-``manifest.json`` recording exactly what was shipped (base model, data fingerprint, iters, seed
-states, eval verdict). The eval gate is enforced first: a model that didn't beat the heuristic is
-not worth packaging, so ``--force`` is required to package a failing one.
+adapter side-loaded — PEFT ``merge_and_unload`` on CUDA, ``mlx_lm fuse`` on Apple Silicon (where it
+can also quantize to fit the unified-memory budget) — and writes a ``manifest.json`` recording
+exactly what was shipped (base model, data fingerprint, iters, seed states, eval verdict). The eval
+gate is enforced first: a model that didn't beat the heuristic is not worth packaging, so
+``--force`` is required to package a failing one.
 
 ``build_manifest`` / ``hash_bytes`` are pure and unit-tested; the fuse/quantize subprocess and CLI
 are exercised by the smoke run.
@@ -75,14 +76,32 @@ def _quantize_command(fused_path: Path, quant_path: Path, bits: int) -> list[str
     ]
 
 
-def run_package(  # pragma: no cover - subprocess driver, exercised by the smoke run
+def _profile_iters(profile) -> int:
+    """Training extent for the manifest, regardless of backend (MLX iters | CUDA epochs)."""
+    return int(getattr(profile, "iters", getattr(profile, "num_train_epochs", 0)))
+
+
+def _merge_cuda(cfg: Config, adapter_dir: Path, fused_path: Path) -> None:  # pragma: no cover
+    """Merge the PEFT LoRA adapter into the base model and save it standalone (CUDA fuse)."""
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    base = AutoModelForCausalLM.from_pretrained(cfg.model.base_model, torch_dtype=torch.bfloat16)
+    merged = PeftModel.from_pretrained(base, str(adapter_dir.resolve())).merge_and_unload()
+    merged.save_pretrained(str(fused_path))
+    AutoTokenizer.from_pretrained(str(adapter_dir.resolve())).save_pretrained(str(fused_path))
+
+
+def run_package(  # pragma: no cover - fuse driver, exercised by the smoke run
     cfg: Config,
     *,
     quant_bits: int | None,
     eval_summary: dict | None,
     stamp: str,
+    seed_states: list[str] | None = None,
 ) -> dict:
-    """Fuse (+ optional quantize) the adapter and write the manifest. Returns the manifest."""
+    """Fuse the adapter (+ optional MLX quantize) and write the manifest. Returns the manifest."""
     adapter_dir = cfg.storage.adapter_dir
     if not adapter_dir.exists():
         raise RuntimeError(f"No trained adapter at {adapter_dir} — run the harvest + train first.")
@@ -90,14 +109,19 @@ def run_package(  # pragma: no cover - subprocess driver, exercised by the smoke
     out_root = cfg.storage.out_dir / "package"
     fused_path = out_root / "fused"
     fused_path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(_fuse_command(cfg.model.base_model, adapter_dir, fused_path), check=True)
 
     final_path = fused_path
-    if quant_bits:
-        quant_path = out_root / f"q{quant_bits}"
-        quant_path.mkdir(parents=True, exist_ok=True)
-        subprocess.run(_quantize_command(fused_path, quant_path, quant_bits), check=True)
-        final_path = quant_path
+    if cfg.backend == "cuda":
+        _merge_cuda(cfg, adapter_dir, fused_path)
+        if quant_bits:
+            print(f"[package] ignoring --quantize q{quant_bits}: not needed on a 32 GB GPU.")
+    else:
+        subprocess.run(_fuse_command(cfg.model.base_model, adapter_dir, fused_path), check=True)
+        if quant_bits:
+            quant_path = out_root / f"q{quant_bits}"
+            quant_path.mkdir(parents=True, exist_ok=True)
+            subprocess.run(_quantize_command(fused_path, quant_path, quant_bits), check=True)
+            final_path = quant_path
 
     train_path = cfg.storage.sft_dir / "train.jsonl"
     data_sha = hash_bytes(train_path.read_bytes()) if train_path.exists() else "missing"
@@ -106,11 +130,11 @@ def run_package(  # pragma: no cover - subprocess driver, exercised by the smoke
         base_model=cfg.model.base_model,
         adapter_path=str(adapter_dir.resolve()),
         fused_path=str(final_path.resolve()),
-        iters=cfg.profile.iters,
-        seed_states=[],
+        iters=_profile_iters(cfg.profile),
+        seed_states=seed_states or [],
         data_sha=data_sha,
         eval_summary=eval_summary,
-        quant_bits=quant_bits,
+        quant_bits=quant_bits if cfg.backend != "cuda" else None,
         stamp=stamp,
     )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -135,8 +159,8 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI wrappe
 
     cfg = load_config()
     eval_summary = None
+    state_paths = resolve_states(args.states)
     if not args.skip_eval:
-        state_paths = resolve_states(args.states)
         if not state_paths:
             print(f"No save states at {args.states!r} to run the eval gate.", file=sys.stderr)
             return 2
@@ -154,7 +178,13 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI wrappe
 
     quant_bits = {"q4": 4, "q8": 8}.get(args.quantize)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    manifest = run_package(cfg, quant_bits=quant_bits, eval_summary=eval_summary, stamp=stamp)
+    manifest = run_package(
+        cfg,
+        quant_bits=quant_bits,
+        eval_summary=eval_summary,
+        stamp=stamp,
+        seed_states=state_paths,
+    )
     print(f"[package] wrote {manifest['fused_path']} + manifest.json")
     return 0
 

@@ -10,7 +10,7 @@ def test_hash_bytes_is_stable_and_short():
 
 def test_build_manifest_records_what_shipped():
     m = build_manifest(
-        base_model="EricFillion/smollm3-3b-mlx",
+        base_model="HuggingFaceTB/SmolLM3-3B",
         adapter_path="/abs/out/sft",
         fused_path="/abs/out/package/q4",
         iters=300,
@@ -20,7 +20,7 @@ def test_build_manifest_records_what_shipped():
         quant_bits=4,
         stamp="2026-06-28T00:00:00Z",
     )
-    assert m["base_model"] == "EricFillion/smollm3-3b-mlx"
+    assert m["base_model"] == "HuggingFaceTB/SmolLM3-3B"
     assert m["quantized_bits"] == 4
     assert m["seed_states"] == ["route1.state", "first.state"]  # basenames only
     assert m["eval"]["passed"] is True
