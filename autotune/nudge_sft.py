@@ -1,9 +1,13 @@
 """Nudge #1 (data side): rejection-sampling SFT examples from rollouts that passed.
 
-"Do more of what passed" = supervised fine-tune the local MLX model to emit the genome that
-the winning rollout used, given the story situation. Each winning rollout becomes one chat
-example (situation -> winning genome). The examples are written in MLX-LM's chat format
-(``{"messages": [...]}``) so ``train_sft.py`` can train a LoRA adapter on them.
+"Do more of what passed" = supervised fine-tune the local MLX model to emit a *better* genome
+given the situation. The supervised signal is an **improvement pair**: from a weaker genome (and
+the story state it reached) the model learns to emit the strongest genome found from the same
+start. This mirrors how the loop actually queries the model — ``propose_next_genome`` hands it
+the current best via ``nudge_steer.build_mutation_prompt`` and asks for an improved genome — so
+the training prompt and the inference prompt are the **same shape** (no train/inference skew), and
+the assistant target is a **flat** genome JSON that ``nudge_steer.parse_genome_response`` can read
+back (a wrapped ``{"genome": ...}`` object would be filtered to empty and silently rejected).
 
 Building the dataset is pure logic and unit-tested; the actual training subprocess lives in
 ``train_sft.py``.
@@ -16,6 +20,8 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from autotune.genome import clamp_params
+from autotune.nudge_steer import build_mutation_prompt
 from autotune.story import Story
 from autotune.verifier import RolloutVerdict
 
@@ -24,56 +30,74 @@ _SYSTEM = (
     "Given the current situation, respond with ONLY the JSON genome that advances furthest."
 )
 
-# Fitness fields worth showing the model as the "situation".
-_FITNESS_KEYS = ("final_map_id", "maps_visited", "badges", "party_size", "stuck_count", "turns")
-
 
 @dataclass(frozen=True)
 class Winner:
-    """A winning rollout's genome paired with its verdict."""
+    """A rollout's genome paired with its verdict (one explored point in genome space)."""
 
     params: dict
     verdict: RolloutVerdict
 
 
-def summarize_fitness(fitness: dict) -> dict:
-    """Compact, model-facing subset of a fitness dict."""
-    return {k: fitness.get(k) for k in _FITNESS_KEYS if k in fitness}
+def _rank(winner: Winner) -> tuple[float, float]:
+    """Order winners by story progress, then the composite tiebreaker (fewer turns/stuck).
+
+    Using ``score`` as the secondary key means within-beat improvements (same beat, less stuck,
+    fewer turns) still form a learnable gradient when every genome ties on ``story_reward``.
+    """
+    return (winner.verdict.story_reward, winner.verdict.score)
 
 
-def build_situation(verdict: RolloutVerdict, story: Story) -> str:
-    """The user-message description of where the run was and where the story is going."""
-    target = story.target_beat
-    return (
-        f"Story target: beat {target.beat_id} '{target.name}' (map {target.map_id}), in order.\n"
-        f"Reached: beat {verdict.furthest_beat} '{verdict.furthest_beat_name}' "
-        f"(reward {verdict.story_reward}, on_story={verdict.on_story}).\n"
-        f"Fitness: {json.dumps(summarize_fitness(verdict.fitness))}\n"
-        f"Propose the genome."
-    )
+def build_pair_example(source: Winner, target_params: dict, story: Story) -> dict:
+    """One MLX-LM chat example: improve ``source``'s genome -> the better ``target_params``.
 
-
-def build_example(winner: Winner, story: Story) -> dict:
-    """One MLX-LM chat example: situation -> winning genome (with a one-line rationale)."""
-    answer = {
-        "genome": winner.params,
-        "rationale": (
-            f"Reached '{winner.verdict.furthest_beat_name}' "
-            f"with story reward {winner.verdict.story_reward}."
-        ),
-    }
+    The user turn is the exact prompt the loop uses at inference (``build_mutation_prompt``); the
+    assistant turn is the flat target genome JSON (parseable by ``parse_genome_response``).
+    """
+    answer = clamp_params(target_params)
     return {
         "messages": [
             {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": build_situation(winner.verdict, story)},
+            {
+                "role": "user",
+                "content": build_mutation_prompt(source.params, source.verdict, story),
+            },
             {"role": "assistant", "content": json.dumps(answer)},
         ]
     }
 
 
 def build_dataset(winners: list[Winner], story: Story) -> list[dict]:
-    """Build chat examples from winners, skipping off-story ones."""
-    return [build_example(w, story) for w in winners if w.verdict.on_story]
+    """Rejection-sample ``winners`` into improvement-pair examples.
+
+    Keeps only on-story winners, picks the strongest as the target, and pairs every weaker winner
+    with it (``weaker genome -> best genome``). Returns ``[]`` when there is no gradient to teach
+    (fewer than two on-story winners, or all tied at the top). Callers should pass winners that
+    share a starting point (e.g. one seed state, or one loop's full-run rollouts) so the pairs are
+    comparable.
+    """
+    on_story = [w for w in winners if w.verdict.on_story]
+    if len(on_story) < 2:
+        return []
+    target = max(on_story, key=_rank)
+    target_rank = _rank(target)
+    return [
+        build_pair_example(w, target.params, story)
+        for w in on_story
+        if _rank(w) < target_rank and w.params != target.params
+    ]
+
+
+def assemble_corpus(winners_by_state: dict[str, list[Winner]], story: Story) -> list[dict]:
+    """Build a corpus from winners grouped by seed state.
+
+    Pairs are formed *within* each state (genomes from different starts aren't comparable), then
+    concatenated. State order is sorted for determinism.
+    """
+    examples: list[dict] = []
+    for state in sorted(winners_by_state):
+        examples.extend(build_dataset(winners_by_state[state], story))
+    return examples
 
 
 def split_train_valid(

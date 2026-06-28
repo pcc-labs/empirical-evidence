@@ -44,6 +44,7 @@ omit = [
     "autotune/generate.py",
     "autotune/loop.py",
     "autotune/experiment.py",
+    "autotune/march.py",
 ]
 
 [tool.coverage.report]

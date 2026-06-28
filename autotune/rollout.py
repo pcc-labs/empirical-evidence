@@ -100,6 +100,10 @@ def run_one(
     fitness_path = rollout_dir / "fitness.json"
     telemetry_dir.mkdir(parents=True, exist_ok=True)
 
+    # Persist the genome alongside the fitness/telemetry so every rollout dir is self-describing
+    # and minable later (the EVOLVE_PARAMS label is otherwise only in memory). Mirrors fitness.json.
+    (rollout_dir / "genome.json").write_text(json.dumps(params))
+
     env = os.environ.copy()
     env["EVOLVE_PARAMS"] = json.dumps(params)
 
