@@ -66,8 +66,11 @@ def _load_cuda(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU drive
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg.model.base_model, torch_dtype=torch.bfloat16, device_map="auto"
+    # Single 3B model on a 32 GB card — load straight to the GPU. device_map="auto" pulls in
+    # accelerate's dispatch + quantizer path, which mis-fires under transient memory pressure.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = AutoModelForCausalLM.from_pretrained(cfg.model.base_model, dtype=torch.bfloat16).to(
+        device
     )
     tok_src = cfg.model.base_model
     if Path(adapter_path).exists():
