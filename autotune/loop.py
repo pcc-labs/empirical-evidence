@@ -77,6 +77,16 @@ def run_loop(cfg: Config) -> dict:
             seed=cfg.loop.seed,
         )
 
+    if cfg.loop.mode == "forest":
+        from autotune.forest_loop import run_forest_loop
+
+        return run_forest_loop(
+            cfg,
+            generations=cfg.loop.generations,
+            max_turns=cfg.loop.max_turns,
+            seed=cfg.loop.seed,
+        )
+
     story = load_story(cfg.env.routes_json, cfg.story.name, cfg.story.target_map_id)
     loop = cfg.loop
     notes_path = _resolve_notes_path(cfg)
@@ -170,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n", type=int, default=None, help="rollouts per generation")
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--nudge", choices=["sft", "steer", "both"], default=None)
-    parser.add_argument("--mode", choices=["story", "brock"], default=None)
+    parser.add_argument("--mode", choices=["story", "brock", "forest"], default=None)
     parser.add_argument(
         "--proposer",
         choices=["trained", "ollama", "heuristic"],
@@ -197,6 +207,14 @@ def main(argv: list[str] | None = None) -> int:
         cfg = cfg.with_loop(**overrides)
 
     summary = run_loop(cfg)
+    if cfg.loop.mode == "forest":
+        print(
+            f"[loop] done (forest): crossed={summary['crossed']} "
+            f"best_reward={summary['best_reward']:.0f}/8 furthest='{summary['furthest']}' "
+            f"evals={summary['evaluations']}"
+        )
+        print("[loop] leaderboard -> out/forest/leaderboard.json")
+        return 0
     if cfg.loop.mode == "brock":
         print(
             f"[loop] done (brock): won={summary['brock_won']} turns={summary['brock_turns']} "

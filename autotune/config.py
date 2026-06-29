@@ -358,8 +358,8 @@ class LoopConfig:
     def validate(self) -> LoopConfig:
         if self.nudge not in {"sft", "steer", "both"}:
             raise ValueError(f"nudge must be sft|steer|both, got {self.nudge!r}")
-        if self.mode not in {"story", "brock"}:
-            raise ValueError(f"mode must be story|brock, got {self.mode!r}")
+        if self.mode not in {"story", "brock", "forest"}:
+            raise ValueError(f"mode must be story|brock|forest, got {self.mode!r}")
         if self.n_rollouts < 1:
             raise ValueError("n_rollouts must be >= 1")
         return self

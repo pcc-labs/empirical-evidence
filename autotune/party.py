@@ -33,6 +33,7 @@ ADDR_PARTY_SPECIES_LIST = 0xD164  # 6 species bytes, mirror of struct offset 0
 OFF_SPECIES = 0x00
 OFF_CUR_HP = 0x01  # 2 bytes, big-endian
 OFF_BOX_LEVEL = 0x03
+OFF_EXP = 0x0E  # 3 bytes, big-endian — the AUTHORITATIVE experience total
 OFF_STATEXP = 0x11  # HP/Atk/Def/Spd/Spc, 2 bytes each: 0x11,0x13,0x15,0x17,0x19
 OFF_DV = 0x1B  # 2 bytes: byte0 = Atk(hi)/Def(lo), byte1 = Spd(hi)/Spc(lo)
 OFF_LEVEL = 0x21  # the authoritative level byte
@@ -41,6 +42,34 @@ OFF_ATK = 0x24
 OFF_DEF = 0x26
 OFF_SPD = 0x28
 OFF_SPC = 0x2A
+
+# Gen-1 experience growth group per species (only the two groups our species use). The level byte
+# and stats are not authoritative on their own: the game treats the 3-byte EXP total as truth and
+# re-derives level (and recomputes stats) from it after the next battle. Poking level/stats WITHOUT
+# poking EXP makes a fake level that collapses back on the first fight — observed: an L6 Charmander
+# stamped "L13" reverts to L7 mid-forest, fights underleveled, faints, and whites out to Pallet.
+GROWTH_MEDIUM_SLOW = "medium_slow"
+GROWTH_MEDIUM_FAST = "medium_fast"
+GROWTH_GROUP: dict[int, str] = {
+    0xB0: GROWTH_MEDIUM_SLOW, 0xB2: GROWTH_MEDIUM_SLOW,   # Charmander line
+    0xB1: GROWTH_MEDIUM_SLOW, 0xB3: GROWTH_MEDIUM_SLOW,   # Squirtle line
+    0x99: GROWTH_MEDIUM_SLOW, 0x09: GROWTH_MEDIUM_SLOW,   # Bulbasaur line (starters: medium-slow)
+    0x24: GROWTH_MEDIUM_FAST, 0x96: GROWTH_MEDIUM_FAST,   # Pidgey line
+    0xA5: GROWTH_MEDIUM_FAST, 0x54: GROWTH_MEDIUM_FAST,   # Rattata, Pikachu
+    0x7B: GROWTH_MEDIUM_FAST, 0x6D: GROWTH_MEDIUM_FAST,   # Caterpie, Metapod
+    0x70: GROWTH_MEDIUM_FAST, 0x6E: GROWTH_MEDIUM_FAST,   # Weedle, Kakuna
+}
+
+
+def exp_for_level(group: str, level: int) -> int:
+    """Minimum EXP total to BE at ``level`` for a growth ``group`` (Gen-1 formulas). Pure."""
+    n = level
+    if group == GROWTH_MEDIUM_FAST:
+        return n ** 3
+    if group == GROWTH_MEDIUM_SLOW:
+        return max(0, int(1.2 * n ** 3 - 15 * n ** 2 + 100 * n - 140))
+    raise KeyError(f"unknown growth group: {group}")
+
 
 # Curated Gen-1 base stats (HP, Atk, Def, Speed, Special), keyed by the internal species IDs in
 # pokemon-kafka's SPECIES_ID_MAP. pokemon-kafka ships no base-stats dex, so this is the source.
@@ -138,6 +167,16 @@ def _w16(pyboy, addr: int, value: int) -> None:
     pyboy.memory[addr + 1] = value & 0xFF
 
 
+def _r24(pyboy, addr: int) -> int:
+    return (pyboy.memory[addr] << 16) | (pyboy.memory[addr + 1] << 8) | pyboy.memory[addr + 2]
+
+
+def _w24(pyboy, addr: int, value: int) -> None:
+    pyboy.memory[addr] = (value >> 16) & 0xFF
+    pyboy.memory[addr + 1] = (value >> 8) & 0xFF
+    pyboy.memory[addr + 2] = value & 0xFF
+
+
 def read_lead(pyboy, slot: int = 0) -> LeadMon:
     """Decode the lead party member's level-independent attributes from RAM."""
     b = _slot_base(slot)
@@ -164,10 +203,17 @@ def set_lead_level(pyboy, level: int, slot: int = 0, full_heal: bool = True) -> 
         raise KeyError(
             f"No base stats for species 0x{mon.species:02X}; add it to BASE_STATS before poking."
         )
+    if mon.species not in GROWTH_GROUP:
+        raise KeyError(
+            f"No growth group for 0x{mon.species:02X}; add it to GROWTH_GROUP before poking."
+        )
     stats = recompute(mon, BASE_STATS[mon.species], level)
     b = _slot_base(slot)
     pyboy.memory[b + OFF_LEVEL] = level
     pyboy.memory[b + OFF_BOX_LEVEL] = level  # keep the box copy consistent
+    # Authoritative: set EXP to the level's threshold, or the game re-derives the level from stale
+    # EXP after the next battle and recomputes stats down to the real level.
+    _w24(pyboy, b + OFF_EXP, exp_for_level(GROWTH_GROUP[mon.species], level))
     _w16(pyboy, b + OFF_MAX_HP, stats["max_hp"])
     _w16(pyboy, b + OFF_ATK, stats["atk"])
     _w16(pyboy, b + OFF_DEF, stats["def"])
@@ -193,10 +239,59 @@ def verify_lead(pyboy, level: int, slot: int = 0) -> dict:
     }
     if mon.level != level:
         raise AssertionError(f"level not written: got {mon.level}, want {level}")
+    exp = _r24(pyboy, b + OFF_EXP)
+    want_exp = exp_for_level(GROWTH_GROUP[mon.species], level)
+    if exp != want_exp:
+        raise AssertionError(f"exp not written: got {exp}, want {want_exp} (level would collapse)")
     for key, want in expected.items():
         if actual[key] != want:
             raise AssertionError(f"{key} drift: wrote {want}, read {actual[key]}")
     return actual
+
+
+BAG_COUNT_ADDR = 0xD31D
+BAG_ITEMS_ADDR = 0xD31E  # pairs of [item_id, quantity], 0xFF-terminated (Gen-1 Red)
+# Gen-1 item ids (decimal): 20=Potion, 19=Super Potion, 18=Hyper Potion. NOTE pokemon-kafka's
+# HEALING_ITEM_IDS mislabels 0x19 (25 = SoulBadge) as "Super Potion" — do NOT use 0x19 here.
+POTION_ID = 0x14  # 20 = Potion (heals 20 HP) — confirmed correct
+SUPER_POTION_ID = 0x13  # 19 = Super Potion (heals 50 HP)
+
+
+def set_bag(pyboy, items: list[tuple[int, int]]) -> None:
+    """Overwrite the bag with ``(item_id, quantity)`` pairs, 0xFF-terminated. Emulator-touching.
+
+    The forest states ship with an empty bag, so the agent's ``hp_heal_threshold`` is inert and the
+    lead bleeds out in the grass. Stocking potions makes healing a live survival lever.
+    """
+    pyboy.memory[BAG_COUNT_ADDR] = len(items)
+    addr = BAG_ITEMS_ADDR
+    for item_id, qty in items:
+        pyboy.memory[addr] = item_id & 0xFF
+        pyboy.memory[addr + 1] = qty & 0xFF
+        addr += 2
+    pyboy.memory[addr] = 0xFF  # terminator
+
+
+def stock_potions(rom_path: str, in_state: str, out_state: str, potions: int = 30) -> None:
+    """Load ``in_state``, stock the bag with Potions, save ``out_state``. Emulator-side.
+
+    Stocks plain Potions (0x14): it's the only healing id pokemon-kafka's ``find_healing_item``
+    actually recognizes, so the agent can detect and the follower can apply them.
+    """
+    from pyboy import PyBoy
+
+    pyboy = PyBoy(rom_path, window="null")
+    try:
+        with open(in_state, "rb") as f:
+            pyboy.load_state(f)
+        set_bag(pyboy, [(POTION_ID, potions)])
+        with open(out_state, "wb") as f:
+            pyboy.save_state(f)
+    finally:
+        try:
+            pyboy.stop()
+        except PermissionError:
+            pass
 
 
 def make_variant(rom_path: str, in_state: str, out_state: str, level: int, slot: int = 0) -> dict:
