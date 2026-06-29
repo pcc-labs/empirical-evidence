@@ -9,13 +9,33 @@ from __future__ import annotations
 
 from autotune.party import (
     BASE_STATS,
+    GROWTH_MEDIUM_FAST,
+    GROWTH_MEDIUM_SLOW,
     LeadMon,
     calc_hp,
     calc_stat,
+    exp_for_level,
     hp_dv,
     recompute,
     stat_exp_term,
 )
+
+
+def test_exp_for_level_medium_slow_l13():
+    # Documented Gen-1 medium-slow total at L13 (Charmander's group); this is the value a poke must
+    # write so the level doesn't collapse back after the first battle.
+    assert exp_for_level(GROWTH_MEDIUM_SLOW, 13) == 1261
+
+
+def test_exp_for_level_medium_fast_is_cube():
+    assert exp_for_level(GROWTH_MEDIUM_FAST, 13) == 13 ** 3
+    assert exp_for_level(GROWTH_MEDIUM_FAST, 10) == 1000
+
+
+def test_exp_for_level_clamps_and_increases():
+    assert exp_for_level(GROWTH_MEDIUM_SLOW, 1) == 0  # formula goes negative at L1 -> clamp
+    slow = [exp_for_level(GROWTH_MEDIUM_SLOW, n) for n in range(2, 30)]
+    assert slow == sorted(slow) and len(set(slow)) == len(slow)  # strictly increasing
 
 
 def test_stat_exp_term_boundaries():
