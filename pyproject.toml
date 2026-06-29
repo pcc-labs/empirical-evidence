@@ -1,13 +1,24 @@
 [project]
 name = "autotune"
 version = "0.1.0"
-description = "A local Try -> Check -> Reward -> Nudge loop (MLX on Apple Silicon) that enforces a story in the pokemon-kafka agent."
+description = "A local Try -> Check -> Reward -> Nudge loop (CUDA, with an optional MLX/Apple-Silicon backend) that enforces a story in the pokemon-kafka agent."
 requires-python = ">=3.11"
 dependencies = [
-    "mlx-lm>=0.21",
+    "torch>=2.7",
     "transformers>=4.45",
+    "peft>=0.13",
+    "trl>=0.12",
+    "accelerate>=1.0",
+    "datasets>=3.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Apple-Silicon backend (AUTOTUNE_BACKEND=mlx). Not installable on Linux/CUDA;
+# install with `uv sync --extra mac` on an M-series Mac.
+mac = [
+    "mlx-lm>=0.21",
 ]
 
 [dependency-groups]
@@ -24,6 +35,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["autotune"]
+
+# Blackwell (sm_120) needs PyTorch built for CUDA 12.8+. Pull torch from the cu128
+# index; mirrors ../overdub's proven setup on this RTX 5090.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
 
 [tool.ruff]
 line-length = 100
@@ -44,6 +65,7 @@ omit = [
     "autotune/generate.py",
     "autotune/loop.py",
     "autotune/experiment.py",
+    "autotune/march.py",
 ]
 
 [tool.coverage.report]

@@ -68,6 +68,15 @@ def _summarize_generation(gen: int, verdicts: list, story: Story) -> None:
 
 def run_loop(cfg: Config) -> dict:
     """Run the full loop. Returns a small summary dict."""
+    if cfg.loop.mode == "brock":
+        from autotune.brock_loop import run_brock_loop
+
+        return run_brock_loop(
+            cfg,
+            generations=cfg.loop.generations,
+            seed=cfg.loop.seed,
+        )
+
     story = load_story(cfg.env.routes_json, cfg.story.name, cfg.story.target_map_id)
     loop = cfg.loop
     notes_path = _resolve_notes_path(cfg)
@@ -115,14 +124,24 @@ def run_loop(cfg: Config) -> dict:
 
         # 4. Nudge.
         proposer = None
+        # A local Ollama model can take the teacher seat — runs the loop with no trained weights
+        # (and no base-model download). It generates SFT data but we don't train on it here.
+        if cfg.proposer == "ollama":
+            from autotune.ollama_proposer import make_ollama_proposer
+
+            proposer = make_ollama_proposer(cfg)
         if loop.nudge in ("sft", "both"):
             sft_buffer.extend(winners)
             examples = nudge_sft.build_dataset(sft_buffer, story)
             if examples:
                 nudge_sft.write_sft_data(cfg.storage.sft_dir, examples, seed=loop.seed)
-                train_sft.train(cfg, cfg.storage.sft_dir, iters=cfg.profile.iters)
-                if cfg.storage.adapter_dir.exists():
-                    proposer = make_proposer(cfg)
+                if cfg.proposer != "ollama":
+                    # iters: MLX profiles carry it; CUDA profiles use epochs (iters=None).
+                    train_sft.train(
+                        cfg, cfg.storage.sft_dir, iters=getattr(cfg.profile, "iters", None)
+                    )
+                    if cfg.storage.adapter_dir.exists():
+                        proposer = make_proposer(cfg)
         if loop.nudge in ("steer", "both"):
             line = nudge_steer.write_nudge_note(notes_path, best, best_params)
             # L2: write the machine-readable genome block pokemon-kafka reads at startup.
@@ -151,8 +170,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n", type=int, default=None, help="rollouts per generation")
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--nudge", choices=["sft", "steer", "both"], default=None)
+    parser.add_argument("--mode", choices=["story", "brock"], default=None)
+    parser.add_argument(
+        "--proposer",
+        choices=["trained", "ollama", "heuristic"],
+        default=None,
+        help="who proposes the next genome (overrides AUTOTUNE_PROPOSER)",
+    )
     args = parser.parse_args(argv)
 
+    if args.proposer is not None:
+        os.environ["AUTOTUNE_PROPOSER"] = args.proposer
     cfg = load_config()
     overrides = {}
     if args.generations is not None:
@@ -163,10 +191,19 @@ def main(argv: list[str] | None = None) -> int:
         overrides["max_turns"] = args.max_turns
     if args.nudge is not None:
         overrides["nudge"] = args.nudge
+    if args.mode is not None:
+        overrides["mode"] = args.mode
     if overrides:
         cfg = cfg.with_loop(**overrides)
 
     summary = run_loop(cfg)
+    if cfg.loop.mode == "brock":
+        print(
+            f"[loop] done (brock): won={summary['brock_won']} turns={summary['brock_turns']} "
+            f"best_level={summary['best_level']} evals={summary['evaluations']}"
+        )
+        print("[loop] best config -> out/best_brock.json (apply with: scripts/apply_brock.sh)")
+        return 0
     print(
         f"[loop] done: {summary['generations_run']} generations, "
         f"reached={summary['reached_target']}"

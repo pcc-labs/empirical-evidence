@@ -91,8 +91,13 @@ def test_mutate_nav_only_touches_nav_params():
 
 
 def test_scenarios_registry():
-    assert set(SCENARIOS) == {"battle", "nav"}
+    assert set(SCENARIOS) == {"battle", "nav", "brock"}
     nav = SCENARIOS["nav"]
     assert nav.battle_limit == 0
     assert nav.reward({"maps_visited": 2}) == 2.0
     assert SCENARIOS["battle"].battle_limit == 1
+    # Brock: a fast win scores in the [11, 12) win band; a loss is the coarse reached floor.
+    brock = SCENARIOS["brock"]
+    assert brock.battle_limit == 1
+    assert brock.reward({"brock_won": True, "brock_turns": 10}) > 11.0
+    assert brock.reward({"brock_won": False, "brock_turns": 30}) == 1.0
