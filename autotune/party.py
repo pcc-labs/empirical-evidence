@@ -249,6 +249,51 @@ def verify_lead(pyboy, level: int, slot: int = 0) -> dict:
     return actual
 
 
+BAG_COUNT_ADDR = 0xD31D
+BAG_ITEMS_ADDR = 0xD31E  # pairs of [item_id, quantity], 0xFF-terminated (Gen-1 Red)
+# Gen-1 item ids (decimal): 20=Potion, 19=Super Potion, 18=Hyper Potion. NOTE pokemon-kafka's
+# HEALING_ITEM_IDS mislabels 0x19 (25 = SoulBadge) as "Super Potion" — do NOT use 0x19 here.
+POTION_ID = 0x14  # 20 = Potion (heals 20 HP) — confirmed correct
+SUPER_POTION_ID = 0x13  # 19 = Super Potion (heals 50 HP)
+
+
+def set_bag(pyboy, items: list[tuple[int, int]]) -> None:
+    """Overwrite the bag with ``(item_id, quantity)`` pairs, 0xFF-terminated. Emulator-touching.
+
+    The forest states ship with an empty bag, so the agent's ``hp_heal_threshold`` is inert and the
+    lead bleeds out in the grass. Stocking potions makes healing a live survival lever.
+    """
+    pyboy.memory[BAG_COUNT_ADDR] = len(items)
+    addr = BAG_ITEMS_ADDR
+    for item_id, qty in items:
+        pyboy.memory[addr] = item_id & 0xFF
+        pyboy.memory[addr + 1] = qty & 0xFF
+        addr += 2
+    pyboy.memory[addr] = 0xFF  # terminator
+
+
+def stock_potions(rom_path: str, in_state: str, out_state: str, potions: int = 30) -> None:
+    """Load ``in_state``, stock the bag with Potions, save ``out_state``. Emulator-side.
+
+    Stocks plain Potions (0x14): it's the only healing id pokemon-kafka's ``find_healing_item``
+    actually recognizes, so the agent can detect and the follower can apply them.
+    """
+    from pyboy import PyBoy
+
+    pyboy = PyBoy(rom_path, window="null")
+    try:
+        with open(in_state, "rb") as f:
+            pyboy.load_state(f)
+        set_bag(pyboy, [(POTION_ID, potions)])
+        with open(out_state, "wb") as f:
+            pyboy.save_state(f)
+    finally:
+        try:
+            pyboy.stop()
+        except PermissionError:
+            pass
+
+
 def make_variant(rom_path: str, in_state: str, out_state: str, level: int, slot: int = 0) -> dict:
     """Load ``in_state``, set the lead to ``level``, and save ``out_state``. Emulator-touching."""
     from pyboy import PyBoy
