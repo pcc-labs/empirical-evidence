@@ -108,3 +108,40 @@ def test_crossing_without_items_rewards_each_reached_beat():
     assert v.reward == 5.0
     assert v.per_beat == (1, 0, 1, 1, 0, 1, 0, 1)
     assert v.beats_passed == 5
+
+
+# --- exit is GATED on defeating the bug catchers --------------------------------------------
+# Hypothesis (the discovery engine never caught it): you cannot leave Viridian Forest without
+# defeating its bug catchers. The exit beat (8) must therefore require trainer_wins >=
+# REQUIRED_BUG_CATCHERS, not a bare map change. `crossed` stays the raw physical-exit fact so a
+# "left without fighting" anomaly is still visible.
+
+
+def _exit(turn=9):
+    return {"event_type": "map_change", "turn": turn, "data": {"prev_map": 51, "new_map": 13}}
+
+
+def test_exit_without_catchers_is_not_credited():
+    # Map changed to Route 2 but no bug catcher was beaten -> beat 8 NOT credited, though the raw
+    # physical exit is still reported on `crossed` (the anomaly the discovery engine missed).
+    v = score_forest([_ow(51), _exit()])
+    assert v.crossed is True  # physically left (raw fact)
+    assert v.per_beat[7] == 0  # exit beat gated -> not credited
+    assert v.beats_passed == 1  # only the enter beat
+
+
+def test_exit_with_one_catcher_is_not_credited():
+    # Only one of the two bug catchers beaten -> still short of the gate, exit not credited.
+    v = score_forest([_ow(51), _trainer_win(), _exit()])
+    assert v.crossed is True
+    assert v.per_beat[7] == 0
+    assert v.beats_passed == 2  # enter + catcher #1, no exit credit
+
+
+def test_exit_after_all_catchers_is_credited():
+    # Both bug catchers beaten before leaving -> exit beat credited.
+    v = score_forest([_ow(51), _trainer_win(), _trainer_win(), _exit()])
+    assert v.crossed is True
+    assert v.per_beat[7] == 1
+    # enter + catcher#1 + catcher#2 + exit = 4
+    assert v.beats_passed == 4
