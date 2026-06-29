@@ -20,7 +20,8 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from autotune.genome import clamp_params
+from autotune.forest_story import ForestVerdict
+from autotune.genome import PARAM_DESCRIPTIONS, clamp_params
 from autotune.nudge_steer import build_mutation_prompt
 from autotune.story import Story
 from autotune.verifier import RolloutVerdict
@@ -136,3 +137,112 @@ def write_sft_data(
     # MLX-LM still expects valid.jsonl to exist; mirror train when too few examples to split.
     write_jsonl(valid_path, valid or train)
     return train_path, valid_path
+
+
+# --------------------------------------------------------------------------- #
+# Forest-keyed SFT: same rejection-sampling shape, keyed on the forest reward  #
+# --------------------------------------------------------------------------- #
+#
+# The forest follower fixes navigation (the lever the nav genome can't move) and lets the genome
+# vary BATTLE/SURVIVAL — flee-or-fight wild encounters, when to heal, how to pick moves. So forest
+# crossings from one start differ by how far the lead survives, and "do more of what passed" means
+# emitting the genome that survived furthest. Identical pair logic to ``build_dataset`` above, but
+# scored by :class:`autotune.forest_story.ForestVerdict` instead of the map-grained story.
+
+_FOREST_SYSTEM = (
+    "You tune a Pokemon Red agent's battle/survival genome to cross Viridian Forest to Pewter "
+    "City. Navigation is hand-driven; your genome decides survival. Given the situation, respond "
+    "with ONLY the JSON genome that survives furthest through the forest."
+)
+
+
+@dataclass(frozen=True)
+class ForestWinner:
+    """A forest rollout's genome paired with its forest verdict and fitness (for the turns key)."""
+
+    params: dict
+    verdict: ForestVerdict
+    fitness: dict
+
+
+def _forest_rank(w: ForestWinner) -> tuple[float, float, float]:
+    """Rank forest crossings by reward, then catchers beaten, then fewer turns.
+
+    Navigation is fixed by the follower, so crossings differ by survival: more sub-beats reached
+    (reward), more catchers beaten, or the same reached in fewer turns is the better target. The
+    secondary keys keep a gradient even when two genomes tie on the sub-beat count.
+    """
+    return (
+        w.verdict.reward,
+        float(w.verdict.signals.trainer_wins),
+        -float(w.fitness.get("turns", 1e9)),
+    )
+
+
+def build_forest_mutation_prompt(params: dict, verdict: ForestVerdict) -> str:
+    """Ask a model to propose ONE improved survival genome for crossing Viridian Forest.
+
+    The user turn the loop would use at inference; pairs with the flat genome JSON target so there
+    is no train/inference skew (mirrors ``build_pair_example`` for the map story).
+    """
+    desc = "\n".join(f"- {k}: {v}" for k, v in PARAM_DESCRIPTIONS.items())
+    return f"""You tune a Pokemon Red agent's genome to cross Viridian Forest to Pewter City.
+Navigation is hand-driven along the route; your genome controls battle and survival — whether to
+flee or fight wild encounters (hp_run_threshold), when to heal (hp_heal_threshold), and how to
+pick moves. Surviving the catchers and the wild grass is what gets the lead to the exit.
+
+This rollout reached forest beat {verdict.furthest_beat} '{verdict.furthest_beat_name}'
+(reward {verdict.reward} sub-beats, {verdict.signals.trainer_wins} catchers beaten,
+crossed={verdict.crossed}).
+
+Current genome:
+{json.dumps(params, indent=2)}
+
+Parameter descriptions:
+{desc}
+
+Propose ONE modified genome that survives further through the forest (beat more catchers, avoid
+fainting, reach the exit). Return ONLY valid JSON with the same keys, nothing else."""
+
+
+def build_forest_pair_example(source: ForestWinner, target_params: dict) -> dict:
+    """One chat example: improve ``source``'s genome -> the stronger ``target_params``."""
+    answer = clamp_params(target_params)
+    return {
+        "messages": [
+            {"role": "system", "content": _FOREST_SYSTEM},
+            {
+                "role": "user",
+                "content": build_forest_mutation_prompt(source.params, source.verdict),
+            },
+            {"role": "assistant", "content": json.dumps(answer)},
+        ]
+    }
+
+
+def build_forest_dataset(winners: list[ForestWinner]) -> list[dict]:
+    """Rejection-sample forest crossings into improvement pairs (weaker genome -> strongest).
+
+    Keeps only in-forest runs (reward >= 1 == entered), picks the strongest as the target, and
+    pairs every strictly-weaker crossing with it. Returns ``[]`` when there is no gradient (fewer
+    than two in-forest runs, or all tied at the top). Callers should pass winners that share a
+    start state so the pairs are comparable.
+    """
+    in_forest = [w for w in winners if w.verdict.reward >= 1]
+    if len(in_forest) < 2:
+        return []
+    target = max(in_forest, key=_forest_rank)
+    target_rank = _forest_rank(target)
+    return [
+        build_forest_pair_example(w, target.params)
+        for w in in_forest
+        if _forest_rank(w) < target_rank and w.params != target.params
+    ]
+
+
+def assemble_forest_corpus(winners_by_state: dict[str, list[ForestWinner]]) -> list[dict]:
+    """Build a forest corpus from winners grouped by start state. Pairs form within each state."""
+    examples: list[dict] = []
+    for state in sorted(winners_by_state):
+        examples.extend(build_forest_dataset(winners_by_state[state]))
+    return examples

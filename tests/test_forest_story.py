@@ -76,3 +76,35 @@ def test_partial_gradient_is_monotonic_signal():
 def test_signals_extraction_counts_trainers_only():
     s = extract_forest_signals([_trainer_win(), _wild_win(), _trainer_win()])
     assert s.trainer_wins == 2
+
+
+# --- de-flattened reward: count of beats REACHED, not the strict in-order frontier ----------
+# Production telemetry never carries bag_count, so the item beats (2, 5, 7) are permanent gaps.
+# The reward must still credit the catcher/sign/exit beats reached past those gaps, or the loop
+# sees a flat 1 for every in-forest run and has no gradient to learn.
+
+
+def test_out_of_order_beat_counts_toward_reward():
+    # entered + sign read, no item/trainers: frontier is stuck at 1 (gap at beat 2), but the
+    # sign (beat 6) is genuinely reached -> reward credits it.
+    v = score_forest([_ow(51), _sign()])
+    assert v.furthest_beat == 1  # in-order frontier, for reporting
+    assert v.reward == 2.0  # enter + sign reached
+
+
+def test_crossing_without_items_rewards_each_reached_beat():
+    # The real forest run we care about: enter, beat both catchers, read the sign, exit — with NO
+    # bag_count ever emitted. Five beats reached {1,3,4,6,8} even though the frontier stays at 1.
+    events = [
+        _ow(51),
+        _trainer_win(),
+        _trainer_win(),
+        _sign(),
+        {"event_type": "map_change", "turn": 5, "data": {"prev_map": 51, "new_map": 13}},
+    ]
+    v = score_forest(events)
+    assert v.crossed is True
+    assert v.furthest_beat == 1
+    assert v.reward == 5.0
+    assert v.per_beat == (1, 0, 1, 1, 0, 1, 0, 1)
+    assert v.beats_passed == 5

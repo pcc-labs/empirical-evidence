@@ -14,10 +14,12 @@ walkthrough, each triggered by an OBSERVATION in telemetry, never a coordinate:
   7. pick up the hidden Potion    (bag count >= 3)
   8. exit to Route 2 / Pewter     (a later map id is visited)
 
-The reward is the count of sub-beats reached IN ORDER — a smooth ladder the nudge can climb even
-on runs that don't fully cross. Item beats read an optional ``bag_count`` field on ``overworld``
-events; until pokemon-kafka emits it they simply score 0, leaving the trainer/sign/exit gradient
-intact. Pure logic: takes already-loaded telemetry events, no emulator.
+The reward is the count of sub-beats reached — a smooth ladder the nudge can climb even on runs
+that don't fully cross. Beats are counted whether or not earlier beats fired, so the
+trainer/sign/exit gradient survives the item beats: until pokemon-kafka emits ``bag_count`` (an
+optional field on ``overworld`` events) the item beats (2, 5, 7) score 0, but the beats past them
+still count. ``furthest_beat`` separately reports the in-order frontier. Pure logic: takes
+already-loaded telemetry events, no emulator.
 """
 
 from __future__ import annotations
@@ -59,10 +61,10 @@ FOREST_BEATS: tuple[ForestBeat, ...] = (
 
 @dataclass(frozen=True)
 class ForestVerdict:
-    furthest_beat: int  # furthest sub-beat reached IN ORDER (0 = not even in the forest)
+    furthest_beat: int  # in-order frontier reached (0 = not even in the forest); reporting only
     furthest_beat_name: str
-    beats_passed: int  # == furthest_beat; the in-order reward
-    per_beat: tuple[int, ...]  # pass=1/fail=0 for beats 1..8
+    beats_passed: int  # count of beats reached (== sum(per_beat)); the dense reward
+    per_beat: tuple[int, ...]  # pass=1/fail=0 for each beat 1..8, marked when REACHED (any order)
     reward: float  # = beats_passed (dense ladder)
     crossed: bool
     signals: ForestSignals
@@ -125,18 +127,25 @@ def score_forest(events: list[dict]) -> ForestVerdict:
     """Score a rollout's forest crossing as a dense, in-order sub-beat reward. Pure."""
     s = extract_forest_signals(events)
     reached = {b.beat_id for b in FOREST_BEATS if _beat_reached(b.beat_id, s)}
-    # in-order frontier: longest run 1,2,3,... with no gap
+
+    # Reward = COUNT of beats reached, not the strict in-order frontier. Production telemetry never
+    # carries bag_count, so the item beats (2, 5, 7) are permanent gaps; an in-order frontier would
+    # cap every in-forest run at 1 and hand the loop a flat reward with no gradient. Counting
+    # reached beats credits the catcher/sign/exit progress past those gaps.
+    per_beat = tuple(1 if b.beat_id in reached else 0 for b in FOREST_BEATS)
+    beats_passed = sum(per_beat)
+
+    # furthest_beat stays the in-order frontier — a faithful "how far, in order" for reporting.
     frontier = 0
     while (frontier + 1) in reached:
         frontier += 1
-    per_beat = tuple(1 if b.beat_id <= frontier else 0 for b in FOREST_BEATS)
     name = FOREST_BEATS[frontier - 1].name if frontier >= 1 else "(not in forest)"
     return ForestVerdict(
         furthest_beat=frontier,
         furthest_beat_name=name,
-        beats_passed=frontier,
+        beats_passed=beats_passed,
         per_beat=per_beat,
-        reward=float(frontier),
+        reward=float(beats_passed),
         crossed=s.exited,
         signals=s,
     )

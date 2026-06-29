@@ -1,9 +1,15 @@
 import json
 
+from autotune.forest_story import ForestSignals, ForestVerdict
 from autotune.genome import base_genome
 from autotune.nudge_sft import (
+    ForestWinner,
     Winner,
+    assemble_forest_corpus,
     build_dataset,
+    build_forest_dataset,
+    build_forest_mutation_prompt,
+    build_forest_pair_example,
     build_pair_example,
     split_train_valid,
     write_sft_data,
@@ -98,3 +104,101 @@ def test_write_sft_data_mirrors_when_too_few(tmp_path, story):
     # A single example -> valid mirrors train so MLX-LM still finds valid.jsonl.
     train_path, valid_path = write_sft_data(tmp_path / "sft", build_dataset(_pair_winners(), story))
     assert valid_path.read_text().strip()  # non-empty
+
+
+# --- forest-keyed SFT: pair weaker -> strongest forest crossing from the same start -----------
+# The follower drives nav; the genome varies survival, so forest crossings differ by how far they
+# survive. These improvement pairs teach "emit the genome that survived furthest" — the same
+# rejection-sampling shape as the map-story builder, keyed on the forest reward instead.
+
+
+def _forest_winner(*, reward, trainer_wins=0, turns=400, crossed=False, run_thr=0.2):
+    v = ForestVerdict(
+        furthest_beat=1,
+        furthest_beat_name="Enter Viridian Forest",
+        beats_passed=int(reward),
+        per_beat=(1, 0, 0, 0, 0, 0, 0, 0),
+        reward=float(reward),
+        crossed=crossed,
+        signals=ForestSignals(
+            entered_forest=reward >= 1,
+            trainer_wins=trainer_wins,
+            max_bag_count=0,
+            sign_read=False,
+            exited=crossed,
+        ),
+    )
+    return ForestWinner(
+        params={**base_genome(), "hp_run_threshold": run_thr},
+        verdict=v,
+        fitness={"turns": turns},
+    )
+
+
+def test_forest_pair_example_target_is_flat_and_parseable():
+    src = _forest_winner(reward=2, run_thr=0.2)
+    ex = build_forest_pair_example(src, {**base_genome(), "hp_run_threshold": 0.45})
+    assert [m["role"] for m in ex["messages"]] == ["system", "user", "assistant"]
+    parsed = parse_genome_response(ex["messages"][-1]["content"])
+    assert parsed is not None and parsed["hp_run_threshold"] == 0.45
+
+
+def test_forest_mutation_prompt_describes_forest_and_survival():
+    prompt = build_forest_mutation_prompt(base_genome(), _forest_winner(reward=2).verdict)
+    low = prompt.lower()
+    assert "forest" in low
+    assert "hp_run_threshold" in low  # the survival lever must be surfaced to the model
+
+
+def test_build_forest_dataset_pairs_weaker_to_best():
+    winners = [
+        _forest_winner(reward=5, trainer_wins=2, crossed=True, run_thr=0.4),  # best: crossed
+        _forest_winner(reward=3, trainer_wins=1, run_thr=0.3),
+        _forest_winner(reward=2, trainer_wins=0, run_thr=0.2),
+    ]
+    examples = build_forest_dataset(winners)
+    assert len(examples) == 2  # both weaker crossings pair toward the best
+    for ex in examples:
+        assert parse_genome_response(ex["messages"][-1]["content"])["hp_run_threshold"] == 0.4
+
+
+def test_build_forest_dataset_breaks_reward_ties_on_survival():
+    # Same reward, but one beat more catchers -> it is the stronger target.
+    winners = [
+        _forest_winner(reward=3, trainer_wins=2, run_thr=0.45),  # best by trainer_wins tiebreak
+        _forest_winner(reward=3, trainer_wins=1, run_thr=0.25),
+    ]
+    examples = build_forest_dataset(winners)
+    assert len(examples) == 1
+    assert parse_genome_response(examples[0]["messages"][-1]["content"])["hp_run_threshold"] == 0.45
+
+
+def test_build_forest_dataset_skips_runs_that_never_entered():
+    winners = [
+        _forest_winner(reward=4, trainer_wins=2, crossed=True, run_thr=0.4),
+        _forest_winner(reward=0, run_thr=0.1),  # never entered the forest -> not comparable
+    ]
+    assert build_forest_dataset(winners) == []  # only one in-forest run -> no gradient
+
+
+def test_build_forest_dataset_empty_without_gradient():
+    winners = [
+        _forest_winner(reward=3, trainer_wins=1, turns=400, run_thr=0.2),
+        _forest_winner(reward=3, trainer_wins=1, turns=400, run_thr=0.3),
+    ]
+    assert build_forest_dataset(winners) == []  # identical rank -> no weaker source
+
+
+def test_assemble_forest_corpus_pairs_within_state():
+    by_state = {
+        "lv13": [
+            _forest_winner(reward=4, trainer_wins=2, crossed=True, run_thr=0.4),
+            _forest_winner(reward=2, run_thr=0.2),
+        ],
+        "lv9": [
+            _forest_winner(reward=3, trainer_wins=1, run_thr=0.35),
+            _forest_winner(reward=1, run_thr=0.15),
+        ],
+    }
+    examples = assemble_forest_corpus(by_state)
+    assert len(examples) == 2  # one pair per state, concatenated
