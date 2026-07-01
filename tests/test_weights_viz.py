@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
-from autotune.weights_viz import aggregate_by_layer, load_lora_deltas
+from autotune.weights_viz import aggregate_by_layer, discover_checkpoints, load_lora_deltas
 
 
 def test_load_lora_deltas_mlx_naming(tmp_path):
@@ -61,3 +61,24 @@ def test_aggregate_by_layer_sums_within_layer_and_ignores_unmatched():
     }
 
     assert aggregate_by_layer(deltas) == {0: 3.0, 1: 5.0}
+
+
+def test_discover_checkpoints_sorts_numbered_and_appends_final(tmp_path):
+    (tmp_path / "0000200_adapters.safetensors").write_bytes(b"")
+    (tmp_path / "0000100_adapters.safetensors").write_bytes(b"")
+    (tmp_path / "adapters.safetensors").write_bytes(b"")
+    (tmp_path / "adapter_config.json").write_bytes(b"")
+
+    checkpoints = discover_checkpoints(tmp_path)
+
+    assert [label for label, _ in checkpoints] == ["100", "200", "final"]
+    assert checkpoints[0][1] == tmp_path / "0000100_adapters.safetensors"
+    assert checkpoints[2][1] == tmp_path / "adapters.safetensors"
+
+
+def test_discover_checkpoints_no_final_file(tmp_path):
+    (tmp_path / "0000100_adapters.safetensors").write_bytes(b"")
+
+    checkpoints = discover_checkpoints(tmp_path)
+
+    assert [label for label, _ in checkpoints] == ["100"]

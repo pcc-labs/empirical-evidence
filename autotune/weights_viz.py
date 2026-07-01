@@ -1,5 +1,6 @@
 """Compute and plot LoRA weight-delta norms from safetensors checkpoints."""
 
+import argparse
 import re
 from pathlib import Path
 
@@ -86,3 +87,48 @@ def plot_norm_trends(
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
+
+
+_CHECKPOINT_RE = re.compile(r"^(\d+)_adapters\.safetensors$")
+
+
+def discover_checkpoints(adapter_dir: Path) -> list[tuple[str, Path]]:
+    numbered: list[tuple[int, Path]] = []
+    for candidate in adapter_dir.glob("*_adapters.safetensors"):
+        match = _CHECKPOINT_RE.match(candidate.name)
+        if match is not None:
+            numbered.append((int(match.group(1)), candidate))
+    numbered.sort(key=lambda item: item[0])
+
+    checkpoints: list[tuple[str, Path]] = [(str(step), path) for step, path in numbered]
+    final = adapter_dir / "adapters.safetensors"
+    if final.exists():
+        checkpoints.append(("final", final))
+    return checkpoints
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Plot LoRA weight-delta norm trends across training checkpoints."
+    )
+    parser.add_argument("--adapter-dir", type=Path, default=Path("out/sft"))
+    parser.add_argument("--out", type=Path, default=Path("out/lora_weight_trends.png"))
+    args = parser.parse_args(argv)
+
+    checkpoints = discover_checkpoints(args.adapter_dir)
+    if len(checkpoints) < 2:
+        raise SystemExit(
+            f"Need at least 2 checkpoints in {args.adapter_dir} to plot a trend, "
+            f"found {len(checkpoints)}"
+        )
+
+    labels = [label for label, _ in checkpoints]
+    per_checkpoint_layer_norms = [
+        aggregate_by_layer(load_lora_deltas(path)) for _, path in checkpoints
+    ]
+    plot_norm_trends(labels, per_checkpoint_layer_norms, args.out)
+    print(f"Wrote {args.out}")
+
+
+if __name__ == "__main__":
+    main()
