@@ -1,8 +1,8 @@
-# autotune — agent guidelines
+# empirical-evidence — agent guidelines
 
 ## What this is
 A local **Try → Check → Reward → Nudge** loop that enforces a *story* in the
-[pokemon-kafka](../pokemon-kafka) agent. autotune does not modify pokemon-kafka; it drives
+[pokemon-kafka](../pokemon-kafka) agent. empirical-evidence does not modify pokemon-kafka; it drives
 the agent through the already-wired `EVOLVE_PARAMS` env seam and reads its telemetry.
 
 - **Try** — `rollout.py` runs `pokemon-kafka/scripts/agent.py` N times.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply the best Brock config autotune found: load the winning pre-Brock state and play the
+# Apply the best Brock config empirical-evidence found: load the winning pre-Brock state and play the
 # fight with the winning battle genome. Reads out/best_brock.json.
 #
 # Usage: scripts/apply_brock.sh [max_turns]

@@ -1,6 +1,6 @@
 ---
 name: brock-battle-learning
-description: Use when running the Pewter-prep speedrun and learning the fastest way to beat Brock (gym 1). Drives the pokemon-kafka agent to Pewter under periodic observation + in-run healing/leveling, captures a pre-Brock state, then runs the autotune brock loop to learn the fewest-turns win. Requires ROM and uv. Sibling to route1-speedrun-demo.
+description: Use when running the Pewter-prep speedrun and learning the fastest way to beat Brock (gym 1). Drives the pokemon-kafka agent to Pewter under periodic observation + in-run healing/leveling, captures a pre-Brock state, then runs the empirical-evidence brock loop to learn the fewest-turns win. Requires ROM and uv. Sibling to route1-speedrun-demo.
 ---
 
 # Brock Battle Learning
@@ -12,7 +12,7 @@ Where `route1-speedrun-demo` grinds Route 1 for a clean telemetry demo, this ski
 configuration that does it.
 
 The framing that makes this work (and that the route1 reward could not — see
-`autotune/docs/experiment-findings.md`):
+`empirical-evidence/docs/experiment-findings.md`):
 
 - **The learning target is the battle, not the navigation.** Navigation to Pewter is *plumbing*;
   the thing we optimize is the Brock fight (turns-to-win), which is non-saturated because the
@@ -27,7 +27,7 @@ The framing that makes this work (and that the route1 reward could not — see
   at startup under `--strategy medium`).
 
 ```
-Phase A: PREPARE  (pokemon-kafka agent)          Phase B: LEARN  (autotune)
+Phase A: PREPARE  (pokemon-kafka agent)          Phase B: LEARN  (empirical-evidence)
  drive to Pewter, segmented ~1000-turn run   ->   from the captured pre-Brock state,
  heal + level + collect items on the way          search {lead level × battle genome}
  observe between segments (durable memory)         for the fewest-turns Brock win
@@ -40,11 +40,11 @@ Phase A: PREPARE  (pokemon-kafka agent)          Phase B: LEARN  (autotune)
 |-------|-----|
 | ROM | `ls "$ROM_PATH"` — Pokemon Red `.gb` |
 | uv | `uv --version` |
-| autotune `.env` | `POKEMON_KAFKA_DIR` + `ROM_PATH` set (`cp .env.example .env`) |
-| tests green | `cd autotune && uv run pytest -q` ; `cd ../pokemon-kafka && uv run pytest -q` |
+| empirical-evidence `.env` | `POKEMON_KAFKA_DIR` + `ROM_PATH` set (`cp .env.example .env`) |
+| tests green | `cd empirical-evidence && uv run pytest -q` ; `cd ../pokemon-kafka && uv run pytest -q` |
 | (optional) Confluent | only if you want live streaming — see `confluent-cloud-setup` |
 
-Run autotune commands from the `autotune/` dir, pokemon-kafka commands from `pokemon-kafka/`.
+Run empirical-evidence commands from the `empirical-evidence/` dir, pokemon-kafka commands from `pokemon-kafka/`.
 
 ## Phase A — prepare: observed speedrun to Pewter
 
@@ -66,9 +66,9 @@ starts smarter (the precedent: `SKILL.md` "run 1000 turns" + observational memor
 
 ```bash
 ROM="rom/Pokemon - Red Version (USA, Europe) (SGB Enhanced).gb"
-STATE="../autotune/states/pre_brock.state"      # captured the instant Brock's fight begins
-CKPT="../autotune/states/journey.state"          # rolling checkpoint for segment resume
-mkdir -p ../autotune/states
+STATE="../empirical-evidence/states/pre_brock.state"      # captured the instant Brock's fight begins
+CKPT="../empirical-evidence/states/journey.state"          # rolling checkpoint for segment resume
+mkdir -p ../empirical-evidence/states
 
 # Segmented run: each segment resumes the journey from the last checkpoint, runs ~1000 turns,
 # and distills observations. The journey state carries across segments; the memory grows.
@@ -92,17 +92,17 @@ Notes:
 - `--save-state-every "500:$CKPT"` overwrites a checkpoint twice per segment; the next segment
   resumes from it via `--load-state`, so the journey accumulates instead of restarting from the
   intro. (Delete `$CKPT` to start a fresh journey.)
-- `--strategy medium` is what turns on the self-healing memory loop; `low` (autotune's rollout
+- `--strategy medium` is what turns on the self-healing memory loop; `low` (empirical-evidence's rollout
   default) does not read notes.
 - In-run healing/leveling needs encounters and potions. If the agent reaches Pewter under-leveled,
   that is a real finding — push the level lever in Phase B, or bias the route toward grass to
   grind (see route1-speedrun-demo's grass-loop `routes.json` patch for precedent).
 - `BROCK_MAP_ID` can be set once discovered (printed below) to pin Brock detection precisely.
 
-### A3. Study the path (from autotune)
+### A3. Study the path (from empirical-evidence)
 
 ```bash
-cd ../autotune
+cd ../empirical-evidence
 # Build the path study from the accumulated telemetry (no re-run). Pass the telemetry dir
 # (the one containing game/), not the game/ subdir itself:
 uv run python -m autotune.speedrun --from-telemetry ../pokemon-kafka/data/telemetry
@@ -118,7 +118,7 @@ is the navigation signal for the next attempt.
 ### B1. (optional) generate the level ladder
 
 The matchup lever ("best Pokemon and level") needs pre-Brock states at different levels. Read the
-capture nuance in `autotune/docs/brock-loop.md` first — a party RAM poke only propagates from an
+capture nuance in `empirical-evidence/docs/brock-loop.md` first — a party RAM poke only propagates from an
 *overworld* state, so for the level lever capture an overworld pre-gym state (`--save-state-on-map
 "<gym_map_id>:..."`) rather than the battle-start `pre_brock.state`.
 
@@ -192,5 +192,5 @@ fan out segmented Phase-A runs across VMs, then run one Phase-B brock loop per c
 
 - pokemon-kafka: `scripts/agent.py` (`--strategy medium`, `--save-state-on-trainer brock:…`),
   `scripts/observe_cli.py`, `pokedex/memory/observations.md`, `notes.md`.
-- autotune: `autotune/speedrun.py`, `autotune/party.py`, `autotune/loop.py --mode brock`,
+- empirical-evidence: `autotune/speedrun.py`, `autotune/party.py`, `autotune/loop.py --mode brock`,
   `scripts/apply_brock.sh`, `docs/brock-loop.md`.

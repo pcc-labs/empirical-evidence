@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Set autotune up from a sibling pokemon-kafka checkout:
+# Set empirical-evidence up from a sibling pokemon-kafka checkout:
 #   1. ensures .gitignore never commits the ROM
-#   2. copies the ROM into autotune/rom/
+#   2. copies the ROM into empirical-evidence/rom/
 #   3. generates .env (from .env.example) with the correct ROM_PATH + POKEMON_KAFKA_DIR
 #
 # Idempotent: safe to re-run. Does not overwrite an existing .env — it patches the

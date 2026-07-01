@@ -213,60 +213,6 @@ wheels = [
 ]
 
 [[package]]
-name = "autotune"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "datasets" },
-    { name = "peft" },
-    { name = "pillow" },
-    { name = "pyboy" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "torch" },
-    { name = "transformers" },
-    { name = "trl" },
-]
-
-[package.optional-dependencies]
-mac = [
-    { name = "mlx-lm" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ipython" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = ">=1.0" },
-    { name = "datasets", specifier = ">=3.0" },
-    { name = "mlx-lm", marker = "extra == 'mac'", specifier = ">=0.21" },
-    { name = "peft", specifier = ">=0.13" },
-    { name = "pillow", specifier = ">=12.2.0" },
-    { name = "pyboy", specifier = "==2.7.0" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "torch", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "transformers", specifier = ">=4.45" },
-    { name = "trl", specifier = ">=0.12" },
-]
-provides-extras = ["mac"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ipython" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[[package]]
 name = "certifi"
 version = "2026.6.17"
 source = { registry = "https://pypi.org/simple" }
@@ -589,6 +535,60 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/81/e1/56027a71e31b02ddc53c7d65b01e68edf64dea2932122fe7746a516f75d5/dill-0.4.1.tar.gz", hash = "sha256:423092df4182177d4d8ba8290c8a5b640c66ab35ec7da59ccfa00f6fa3eea5fa", size = 187315, upload-time = "2026-01-19T02:36:56.85Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/77/dc8c558f7593132cf8fefec57c4f60c83b16941c574ac5f619abb3ae7933/dill-0.4.1-py3-none-any.whl", hash = "sha256:1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d", size = 120019, upload-time = "2026-01-19T02:36:55.663Z" },
+]
+
+[[package]]
+name = "empirical-evidence"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "peft" },
+    { name = "pillow" },
+    { name = "pyboy" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "trl" },
+]
+
+[package.optional-dependencies]
+mac = [
+    { name = "mlx-lm" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ipython" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=1.0" },
+    { name = "datasets", specifier = ">=3.0" },
+    { name = "mlx-lm", marker = "extra == 'mac'", specifier = ">=0.21" },
+    { name = "peft", specifier = ">=0.13" },
+    { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pyboy", specifier = "==2.7.0" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "torch", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "transformers", specifier = ">=4.45" },
+    { name = "trl", specifier = ">=0.12" },
+]
+provides-extras = ["mac"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipython" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
 ]
 
 [[package]]

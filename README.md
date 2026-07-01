@@ -1,11 +1,15 @@
-# autotune
+# empirical-evidence
+
+> *Empirical evidence is information acquired through observation, experimentation, or direct
+> experience.* That is what this loop runs on: each generation runs the agent, observes its own
+> telemetry, and learns from what actually happened.
 
 A local **Try → Check → Reward → Nudge** training loop that runs entirely on Apple Silicon via
 [MLX](https://github.com/ml-explore/mlx-lm), and **enforces a story** in the
 [pokemon-kafka](../pokemon-kafka) agent.
 
 ```
-        ┌──────────────── autotune loop ────────────────┐
+        ┌──────────── empirical-evidence loop ───────────┐
  story  │  Try            Check + Reward         Nudge   │
  spec ─►│  rollout.py ──► verifier.py ──► ┌ nudge_sft.py │──► new genome /
         │  run pk agent   per-beat        └ nudge_steer  │    adapter
@@ -21,7 +25,7 @@ training for **local LoRA training on an M-series Mac**, and is organized around
 
 ## The story is pokemon-kafka's own
 
-autotune does **not** invent a new narrative. The story is pokemon-kafka's canonical Route-1
+empirical-evidence does **not** invent a new narrative. The story is pokemon-kafka's canonical Route-1
 progression, assembled from concepts that already exist there:
 
 - chapter ordering = `MAP_PROGRESS` (`pokemon-kafka/scripts/evolve.py`), and

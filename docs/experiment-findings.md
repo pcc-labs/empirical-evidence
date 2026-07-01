@@ -1,6 +1,6 @@
-# Constrained-test findings: can autotune learn by tuning the genome?
+# Constrained-test findings: can empirical-evidence learn by tuning the genome?
 
-This documents three experiments run to test whether the autotune loop (Try, Check, Reward,
+This documents three experiments run to test whether the empirical-evidence loop (Try, Check, Reward,
 Nudge) can demonstrably *learn* by tuning the pokemon-kafka agent's 12-parameter genome. The
 short answer is no, and the reason is consistent and instructive: the genome parameters have low
 leverage over outcomes, so there is rarely a gap for the loop to close, and where a gap exists it

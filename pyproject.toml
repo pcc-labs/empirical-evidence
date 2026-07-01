@@ -1,5 +1,5 @@
 [project]
-name = "autotune"
+name = "empirical-evidence"
 version = "0.1.0"
 description = "A local Try -> Check -> Reward -> Nudge loop (CUDA, with an optional MLX/Apple-Silicon backend) that enforces a story in the pokemon-kafka agent."
 requires-python = ">=3.11"

@@ -8,7 +8,7 @@ GENERATIONS="${1:-1}"
 N="${2:-3}"
 NUDGE="${3:-both}"
 
-echo "==> autotune loop (generations=$GENERATIONS, n=$N, nudge=$NUDGE)"
+echo "==> empirical-evidence loop (generations=$GENERATIONS, n=$N, nudge=$NUDGE)"
 time uv run python -m autotune.loop \
   --generations "$GENERATIONS" \
   --n "$N" \

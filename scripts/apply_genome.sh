@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply the best genome autotune found to a real pokemon-kafka run.
+# Apply the best genome empirical-evidence found to a real pokemon-kafka run.
 # Reads out/best_genome.json, exports its "genome" as EVOLVE_PARAMS, runs the pk agent.
 #
 # Usage: scripts/apply_genome.sh [max_turns]

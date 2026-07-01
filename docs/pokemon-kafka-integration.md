@@ -1,17 +1,17 @@
-# autotune ↔ pokemon-kafka integration
+# empirical-evidence ↔ pokemon-kafka integration
 
-This document explains how autotune and [pokemon-kafka](../../pokemon-kafka) work together: how
+This document explains how empirical-evidence and [pokemon-kafka](../../pokemon-kafka) work together: how
 the training loop runs the agent, scores it against a story, and feeds what it learns back into
 how the agent plays.
 
 ## Roles
 
-autotune is the **training loop**. pokemon-kafka is the **environment**. autotune runs the
+empirical-evidence is the **training loop**. pokemon-kafka is the **environment**. empirical-evidence runs the
 pokemon-kafka agent, verifies each run against an ordered story, and reinforces what stayed
 on-story. It does not fork or vendor pokemon-kafka; it talks to it through stable seams.
 
 ```
-        ┌──────────────── autotune loop ────────────────┐
+        ┌──────────── empirical-evidence loop ───────────┐
  story  │  Try            Check + Reward         Nudge   │
  spec ─►│  rollout.py ──► verifier.py ──► ┌ nudge_sft.py │──► new genome /
         │  run pk agent   per-beat        └ nudge_steer  │    adapter
@@ -29,24 +29,24 @@ on-story. It does not fork or vendor pokemon-kafka; it talks to it through stabl
 | **Nudge** | Reinforce what passed. | `nudge_sft.py` (train) and/or `nudge_steer.py` (steer). |
 
 The story itself is pokemon-kafka's own: chapter ordering from `scripts/evolve.py::MAP_PROGRESS`
-and per-beat waypoints from `references/routes.json`. autotune mirrors the ordering in
+and per-beat waypoints from `references/routes.json`. empirical-evidence mirrors the ordering in
 `story.py` and reads the waypoints at runtime.
 
 ## The seams (data contract)
 
-autotune and pokemon-kafka exchange data through four stable interfaces. None of them require
+empirical-evidence and pokemon-kafka exchange data through four stable interfaces. None of them require
 importing the other project at runtime.
 
 | Seam | Direction | Shape |
 |------|-----------|-------|
-| `EVOLVE_PARAMS` env var | autotune → pk | JSON genome the agent applies at startup. |
-| Telemetry JSONL + fitness | pk → autotune | `<telemetry-dir>/game/<date>.jsonl` events + `--output-json` fitness. |
-| Genome block in `notes.md` | autotune → pk | A marked JSON block the agent reads at startup (L2). |
-| `out/best_genome.json` | autotune → you | The best genome found, for applying to a real run (L1). |
+| `EVOLVE_PARAMS` env var | empirical-evidence → pk | JSON genome the agent applies at startup. |
+| Telemetry JSONL + fitness | pk → empirical-evidence | `<telemetry-dir>/game/<date>.jsonl` events + `--output-json` fitness. |
+| Genome block in `notes.md` | empirical-evidence → pk | A marked JSON block the agent reads at startup (L2). |
+| `out/best_genome.json` | empirical-evidence → you | The best genome found, for applying to a real run (L1). |
 
 ### The genome block format
 
-autotune writes this block into `pokemon-kafka/notes.md`. pokemon-kafka reads the last such
+empirical-evidence writes this block into `pokemon-kafka/notes.md`. pokemon-kafka reads the last such
 block at agent startup.
 
 ```
@@ -80,7 +80,7 @@ reads that block at startup and uses it as its parameter baseline. The `EVOLVE_P
 still overrides it, so behavior is unchanged when no block is present.
 
 ```bash
-# autotune writes pk/notes.md during the loop:
+# empirical-evidence writes pk/notes.md during the loop:
 uv run python -m autotune.loop --nudge steer
 
 # pokemon-kafka picks it up with zero flags:
@@ -88,14 +88,14 @@ cd ../pokemon-kafka && uv run scripts/agent.py rom/*.gb
 ```
 
 Point the block somewhere else with `AUTOTUNE_NOTES_PATH` (for example, to keep it inside
-autotune's `out/` during experiments).
+empirical-evidence's `out/` during experiments).
 
-The read side lives in pokemon-kafka: `scripts/autotune_bridge.py::load_genome_from_notes`,
+The read side lives in pokemon-kafka: `scripts/empirical-evidence_bridge.py::load_genome_from_notes`,
 called from `scripts/agent.py`.
 
 ### L3: pokemon-kafka evolves with the local model
 
-pokemon-kafka's own `scripts/evolve.py` can use autotune's locally-trained model as its
+pokemon-kafka's own `scripts/evolve.py` can use empirical-evidence's locally-trained model as its
 mutation proposer instead of Claude.
 
 ```bash
@@ -103,7 +103,7 @@ cd ../pokemon-kafka
 uv run scripts/evolve.py rom/*.gb --llm local
 ```
 
-`--llm local` calls `autotune_bridge.make_local_llm_fn`, which drives autotune's model through
+`--llm local` calls `empirical-evidence_bridge.make_local_llm_fn`, which drives empirical-evidence's model through
 `mlx_lm generate`. No API key is needed. The default `--llm anthropic` and `--no-llm` behaviors
 are unchanged.
 
@@ -152,7 +152,7 @@ Status of this path:
 ## End-to-end workflow
 
 ```bash
-cd autotune
+cd empirical-evidence
 cp .env.example .env          # set POKEMON_KAFKA_DIR and ROM_PATH
 
 # 1. Run the loop. Writes out/best_genome.json and pk/notes.md.
@@ -170,7 +170,7 @@ uv run scripts/evolve.py rom/*.gb --llm local
 
 ## Files involved
 
-### In autotune
+### In empirical-evidence
 | File | Role |
 |------|------|
 | `rollout.py` | Run the pk agent N times (Try). |
@@ -183,21 +183,21 @@ uv run scripts/evolve.py rom/*.gb --llm local
 ### In pokemon-kafka
 | File | Role |
 |------|------|
-| `scripts/autotune_bridge.py` | Read the notes genome (L2); build the local proposer (L3). |
+| `scripts/empirical-evidence_bridge.py` | Read the notes genome (L2); build the local proposer (L3). |
 | `scripts/agent.py` | Seed `evolve_params` from the notes genome at startup (L2). |
-| `scripts/evolve.py` | `--llm local` uses autotune's model as the proposer (L3). |
+| `scripts/evolve.py` | `--llm local` uses empirical-evidence's model as the proposer (L3). |
 
 ## Design modes: frozen (current) vs live (future)
 
-**Frozen (current, default).** autotune tunes offline. It runs the agent many times, scores each
+**Frozen (current, default).** empirical-evidence tunes offline. It runs the agent many times, scores each
 run, and writes a genome into `notes.md` and `out/best_genome.json`. The speedrun then loads that
-genome once at startup and plays with no autotune code running. The genome crosses between phases
+genome once at startup and plays with no empirical-evidence code running. The genome crosses between phases
 as data, not as running code. This is the only mode that exists today.
 
-**Live (future, not built).** autotune would steer the agent during the speedrun, updating its
+**Live (future, not built).** empirical-evidence would steer the agent during the speedrun, updating its
 behavior as it plays rather than only at startup. This is a different, online design. The frozen
 path stays the default; live steering would be opt-in. Tracked in
-[issue #2](https://github.com/pcc-labs/autotune/issues/2).
+[issue #2](https://github.com/pcc-labs/empirical-evidence/issues/2).
 
 ## Status
 
