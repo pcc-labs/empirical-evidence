@@ -6,7 +6,10 @@ text is fed to ``nudge_steer.parse_genome_response``:
 * ``cuda`` (default) — load the base model + PEFT adapter **once** (cached) and generate in-process
   with greedy decoding. Far faster than a per-call subprocess, which matters because the eval calls
   the proposer repeatedly.
-* ``mlx`` — wrap ``mlx_lm generate`` with the trained adapter as a subprocess (Apple Silicon).
+* ``mlx`` — load the base model + trained adapter **once** (cached) via ``mlx_lm`` and generate
+  in-process on Apple Silicon. Same rationale as CUDA: eval/benchmark call the proposer repeatedly,
+  so a per-call subprocess that reloads the 3B model each time is both slow and (because it passed a
+  raw ``--prompt`` with SmolLM3's thinking left on) produced empty, unparseable output.
 
 Train/inference parity is load-bearing: the prompt handed in is the *user* turn from
 ``nudge_steer.build_mutation_prompt`` — exactly what training paired with the target genome — so we
@@ -20,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -36,17 +38,44 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # MLX backend (Apple Silicon)
 # ---------------------------------------------------------------------------
 
+# Cache the loaded (model, tokenizer) per adapter path so eval's repeated calls don't reload.
+_MLX_CACHE: dict[str, tuple] = {}
 
-def generate_text(  # pragma: no cover - subprocess driver
-    cfg: Config, prompt: str, *, adapter_path: Path | None = None
-) -> str:
-    """Run mlx_lm generate and return the produced text (stdout)."""
-    cmd = ["uv", "run", "python", "-m", "mlx_lm", "generate", "--model", cfg.model.base_model]
-    if adapter_path is not None and Path(adapter_path).exists():
-        cmd += ["--adapter-path", str(Path(adapter_path).resolve())]
-    cmd += ["--prompt", prompt, "--max-tokens", str(_MAX_TOKENS)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    return proc.stdout
+
+def _load_mlx(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU driver
+    """Load base model + trained adapter (if present) via mlx_lm once, cached by adapter path."""
+    key = str(Path(adapter_path).resolve())
+    if key in _MLX_CACHE:
+        return _MLX_CACHE[key]
+
+    from mlx_lm import load
+
+    if Path(adapter_path).exists():
+        model, tokenizer = load(cfg.model.base_model, adapter_path=key)
+    else:
+        model, tokenizer = load(cfg.model.base_model)
+    _MLX_CACHE[key] = (model, tokenizer)
+    return model, tokenizer
+
+
+def _generate_mlx(cfg: Config, prompt: str, adapter_path: Path) -> str:  # pragma: no cover
+    """Greedy-decode one genome from the trained model, mirroring the SFT chat structure.
+
+    Reconstructs the same ``system``/``user`` chat the SFT examples paired (``nudge_sft._SYSTEM`` +
+    ``build_mutation_prompt``), disables SmolLM3's thinking, and strips any residual ``<think>``
+    block so the output is the flat JSON ``parse_genome_response`` expects.
+    """
+    from mlx_lm import generate as mlx_generate
+
+    from autotune.nudge_sft import _SYSTEM
+
+    model, tokenizer = _load_mlx(cfg, adapter_path)
+    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}]
+    text_prompt = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, enable_thinking=False, tokenize=False
+    )
+    out = mlx_generate(model, tokenizer, prompt=text_prompt, max_tokens=_MAX_TOKENS, verbose=False)
+    return _THINK_RE.sub("", out).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -107,16 +136,20 @@ def _generate_cuda(cfg: Config, prompt: str, adapter_path: Path) -> str:  # prag
     return _THINK_RE.sub("", text).strip()
 
 
-def make_proposer(cfg: Config) -> Callable[[str], str]:
-    """Return a ``(prompt) -> text`` proposer backed by the model + adapter (if trained)."""
-    adapter = cfg.storage.adapter_dir
+def make_proposer(cfg: Config, adapter_dir: Path | None = None) -> Callable[[str], str]:
+    """Return a ``(prompt) -> text`` proposer backed by the model + adapter (if trained).
+
+    ``adapter_dir`` selects which trained adapter to load; it defaults to
+    ``cfg.storage.adapter_dir`` (the final adapter). Pass an explicit dir to benchmark a checkpoint.
+    """
+    adapter = adapter_dir if adapter_dir is not None else cfg.storage.adapter_dir
 
     if cfg.backend == "cuda":
         def _proposer(prompt: str) -> str:
             return _generate_cuda(cfg, prompt, adapter)
     else:
         def _proposer(prompt: str) -> str:
-            return generate_text(cfg, prompt, adapter_path=adapter)
+            return _generate_mlx(cfg, prompt, adapter)
 
     return _proposer
 
