@@ -48,3 +48,17 @@ def load_lora_deltas(path: Path) -> dict[str, float]:
             raise ValueError(f"{prefix} is missing its lora_b half in {path}")
         deltas[prefix] = _delta_norm(sides["a"], sides["b"])
     return deltas
+
+
+_LAYER_RE = re.compile(r"^layers\.(\d+)\.")
+
+
+def aggregate_by_layer(deltas: dict[str, float]) -> dict[int, float]:
+    totals: dict[int, float] = {}
+    for prefix, norm in deltas.items():
+        match = _LAYER_RE.match(prefix)
+        if match is None:
+            continue
+        layer = int(match.group(1))
+        totals[layer] = totals.get(layer, 0.0) + norm
+    return totals

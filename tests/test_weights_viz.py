@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
-from autotune.weights_viz import load_lora_deltas
+from autotune.weights_viz import aggregate_by_layer, load_lora_deltas
 
 
 def test_load_lora_deltas_mlx_naming(tmp_path):
@@ -50,3 +50,14 @@ def test_load_lora_deltas_missing_pair_raises(tmp_path):
 
     with pytest.raises(ValueError, match="layers.2.mlp.gate_proj"):
         load_lora_deltas(path)
+
+
+def test_aggregate_by_layer_sums_within_layer_and_ignores_unmatched():
+    deltas = {
+        "layers.0.mlp.down_proj": 1.0,
+        "layers.0.self_attn.q_proj": 2.0,
+        "layers.1.mlp.up_proj": 5.0,
+        "not_a_layer_key": 9.0,
+    }
+
+    assert aggregate_by_layer(deltas) == {0: 3.0, 1: 5.0}
