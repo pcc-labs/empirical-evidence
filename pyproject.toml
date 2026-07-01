@@ -16,6 +16,7 @@ dependencies = [
     "pillow>=12.2.0",
     "numpy>=2.1",
     "safetensors>=0.8",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]

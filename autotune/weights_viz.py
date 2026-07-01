@@ -62,3 +62,27 @@ def aggregate_by_layer(deltas: dict[str, float]) -> dict[int, float]:
         layer = int(match.group(1))
         totals[layer] = totals.get(layer, 0.0) + norm
     return totals
+
+
+def plot_norm_trends(
+    labels: list[str],
+    per_checkpoint_layer_norms: list[dict[int, float]],
+    out_path: Path,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    layers = sorted({layer for norms in per_checkpoint_layer_norms for layer in norms})
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for layer in layers:
+        ys = [norms.get(layer, 0.0) for norms in per_checkpoint_layer_norms]
+        ax.plot(labels, ys, marker="o", label=f"layer {layer}")
+    ax.set_xlabel("checkpoint")
+    ax.set_ylabel("aggregate weight-delta norm per layer")
+    ax.set_title("LoRA weight delta norms by layer across checkpoints")
+    ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize="small")
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
