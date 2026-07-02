@@ -176,14 +176,24 @@ generalization, same caveat as the smoke.
 
 ```
 forest benchmark: proposer genome per checkpoint vs base genome (baseline reward 2.00)
-  checkpoint   reward    nav  battle  discov  crossed
-    baseline     2.00   1.00    1.00    0.00     0.00
-          15     2.00   1.00    1.00    0.00     0.00
-          30     2.00   1.00    1.00    0.00     0.00
-          45     2.00   1.00    1.00    0.00     0.00
-          60     2.00   1.00    1.00    0.00     0.00
-       final     2.00   1.00    1.00    0.00     0.00
+  checkpoint   reward    nav  battle  discov  crossed   turns
+    baseline     2.00   1.00    1.00    0.00     0.00     125
+          15     2.00   1.00    1.00    0.00     0.00     125
+          30     2.00   1.00    1.00    0.00     0.00     125
+          45     2.00   1.00    1.00    0.00     0.00     125
+          60     2.00   1.00    1.00    0.00     0.00     125
+       final     2.00   1.00    1.00    0.00     0.00     125
 ```
+
+**Turns column** (added after the first gradient run, rerun same adapter): mean turns survived is now
+reported per checkpoint — the fine-grained survival metric the beat flags miss. The rerun pins the
+remaining flatness precisely: every checkpoint's proposed genome produces an IDENTICAL 125-turn run
+(same as base genome). Two causes visible in the run log: (a) the only battle on the lv6 canonical
+route is the catcher TRAINER battle — fleeing is impossible and the lv6 lead carries no potions, so
+`hp_run_threshold`/`hp_heal_threshold` cannot express there; (b) the 11-pair adapter memorizes one
+target genome, so checkpoints do not propose differently. Separating checkpoints needs a larger,
+more diverse corpus (multiple targets per situation) and/or a benchmark state where flee/heal
+levers can fire (wild-encounter pressure with potions in the bag).
 
 **What this does and doesn't show.** The harvest sweeps *do* have real gradient this time — turns
 before ending the rollout vary 3-4x across genomes at both levels, and the lv13 sweep even shows a
