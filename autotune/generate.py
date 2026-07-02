@@ -58,19 +58,26 @@ def _load_mlx(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU driver
     return model, tokenizer
 
 
-def _generate_mlx(cfg: Config, prompt: str, adapter_path: Path) -> str:  # pragma: no cover
+def _generate_mlx(
+    cfg: Config, prompt: str, adapter_path: Path, system: str | None = None
+) -> str:  # pragma: no cover
     """Greedy-decode one genome from the trained model, mirroring the SFT chat structure.
 
     Reconstructs the same ``system``/``user`` chat the SFT examples paired (``nudge_sft._SYSTEM`` +
     ``build_mutation_prompt``), disables SmolLM3's thinking, and strips any residual ``<think>``
-    block so the output is the flat JSON ``parse_genome_response`` expects.
+    block so the output is the flat JSON ``parse_genome_response`` expects. ``system`` overrides
+    the default so callers whose examples trained with a different system prompt (e.g. the forest
+    benchmark's ``nudge_sft._FOREST_SYSTEM``) don't hit train/inference skew.
     """
     from mlx_lm import generate as mlx_generate
 
     from autotune.nudge_sft import _SYSTEM
 
     model, tokenizer = _load_mlx(cfg, adapter_path)
-    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": system or _SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
     text_prompt = tokenizer.apply_chat_template(
         messages, add_generation_prompt=True, enable_thinking=False, tokenize=False
     )
@@ -113,14 +120,22 @@ def _load_cuda(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU drive
     return model, tokenizer
 
 
-def _generate_cuda(cfg: Config, prompt: str, adapter_path: Path) -> str:  # pragma: no cover
-    """Greedy-decode one genome from the trained model, mirroring the SFT chat structure."""
+def _generate_cuda(
+    cfg: Config, prompt: str, adapter_path: Path, system: str | None = None
+) -> str:  # pragma: no cover
+    """Greedy-decode one genome from the trained model, mirroring the SFT chat structure.
+
+    ``system`` overrides the default chat system prompt — see ``_generate_mlx`` for why.
+    """
     import torch
 
     from autotune.nudge_sft import _SYSTEM
 
     model, tokenizer = _load_cuda(cfg, adapter_path)
-    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": system or _SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
     enc = tokenizer.apply_chat_template(
         messages,
         add_generation_prompt=True,
@@ -136,20 +151,24 @@ def _generate_cuda(cfg: Config, prompt: str, adapter_path: Path) -> str:  # prag
     return _THINK_RE.sub("", text).strip()
 
 
-def make_proposer(cfg: Config, adapter_dir: Path | None = None) -> Callable[[str], str]:
+def make_proposer(
+    cfg: Config, adapter_dir: Path | None = None, system: str | None = None
+) -> Callable[[str], str]:
     """Return a ``(prompt) -> text`` proposer backed by the model + adapter (if trained).
 
     ``adapter_dir`` selects which trained adapter to load; it defaults to
     ``cfg.storage.adapter_dir`` (the final adapter). Pass an explicit dir to benchmark a checkpoint.
+    ``system`` overrides the chat system prompt — the forest benchmark passes
+    ``nudge_sft._FOREST_SYSTEM`` so inference pairs with what the forest examples trained.
     """
     adapter = adapter_dir if adapter_dir is not None else cfg.storage.adapter_dir
 
     if cfg.backend == "cuda":
         def _proposer(prompt: str) -> str:
-            return _generate_cuda(cfg, prompt, adapter)
+            return _generate_cuda(cfg, prompt, adapter, system)
     else:
         def _proposer(prompt: str) -> str:
-            return _generate_mlx(cfg, prompt, adapter)
+            return _generate_mlx(cfg, prompt, adapter, system)
 
     return _proposer
 
