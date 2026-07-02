@@ -110,36 +110,36 @@ def test_crossing_without_items_rewards_each_reached_beat():
     assert v.beats_passed == 5
 
 
-# --- exit is GATED on defeating the bug catchers --------------------------------------------
-# Hypothesis (the discovery engine never caught it): you cannot leave Viridian Forest without
-# defeating its bug catchers. The exit beat (8) must therefore require trainer_wins >=
-# REQUIRED_BUG_CATCHERS, not a bare map change. `crossed` stays the raw physical-exit fact so a
-# "left without fighting" anomaly is still visible.
+# --- exit beat is NOT gated on the bug catchers ----------------------------------------------
+# The old hypothesis ("you cannot leave Viridian Forest without defeating its bug catchers")
+# was FALSIFIED by ground truth: the flood-fill-extracted canonical route crosses to Route 2
+# while triggering only ~1 catcher sight-line (verified 155-turn crossing, 2026-07-01). Beat 8
+# is a bare exit observation; the catcher beats (3, 4) already reward the fights themselves.
 
 
 def _exit(turn=9):
     return {"event_type": "map_change", "turn": turn, "data": {"prev_map": 51, "new_map": 13}}
 
 
-def test_exit_without_catchers_is_not_credited():
-    # Map changed to Route 2 but no bug catcher was beaten -> beat 8 NOT credited, though the raw
-    # physical exit is still reported on `crossed` (the anomaly the discovery engine missed).
+def test_exit_without_catchers_is_credited():
+    # A physical exit is a real crossing regardless of fights (the canonical route can dodge
+    # every sight-line on a lucky wander pattern).
     v = score_forest([_ow(51), _exit()])
-    assert v.crossed is True  # physically left (raw fact)
-    assert v.per_beat[7] == 0  # exit beat gated -> not credited
-    assert v.beats_passed == 1  # only the enter beat
+    assert v.crossed is True
+    assert v.per_beat[7] == 1
+    assert v.beats_passed == 2  # enter + exit
 
 
-def test_exit_with_one_catcher_is_not_credited():
-    # Only one of the two bug catchers beaten -> still short of the gate, exit not credited.
+def test_exit_with_one_catcher_credits_both_beats():
+    # The verified real crossing: one catcher sight-line fires on the route, then the exit.
     v = score_forest([_ow(51), _trainer_win(), _exit()])
     assert v.crossed is True
-    assert v.per_beat[7] == 0
-    assert v.beats_passed == 2  # enter + catcher #1, no exit credit
+    assert v.per_beat[7] == 1
+    assert v.beats_passed == 3  # enter + catcher #1 + exit
 
 
 def test_exit_after_all_catchers_is_credited():
-    # Both bug catchers beaten before leaving -> exit beat credited.
+    # Both bug catchers beaten before leaving -> catcher beats and exit all credited.
     v = score_forest([_ow(51), _trainer_win(), _trainer_win(), _exit()])
     assert v.crossed is True
     assert v.per_beat[7] == 1
