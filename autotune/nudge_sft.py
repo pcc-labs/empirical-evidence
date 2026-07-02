@@ -49,11 +49,15 @@ def _rank(winner: Winner) -> tuple[float, float]:
     return (winner.verdict.story_reward, winner.verdict.score)
 
 
-def build_pair_example(source: Winner, target_params: dict, story: Story) -> dict:
+def build_pair_example(
+    source: Winner, target_params: dict, story: Story, domains: tuple[str, ...] = ("nav",)
+) -> dict:
     """One MLX-LM chat example: improve ``source``'s genome -> the better ``target_params``.
 
     The user turn is the exact prompt the loop uses at inference (``build_mutation_prompt``); the
-    assistant turn is the flat target genome JSON (parseable by ``parse_genome_response``).
+    assistant turn is the flat target genome JSON (parseable by ``parse_genome_response``). Tagged
+    ``("nav",)`` by default: the map-grained story reward is map progress, and the harvest
+    population varies only navigation params.
     """
     answer = clamp_params(target_params)
     return {
@@ -64,7 +68,8 @@ def build_pair_example(source: Winner, target_params: dict, story: Story) -> dic
                 "content": build_mutation_prompt(source.params, source.verdict, story),
             },
             {"role": "assistant", "content": json.dumps(answer)},
-        ]
+        ],
+        "domains": list(domains),
     }
 
 

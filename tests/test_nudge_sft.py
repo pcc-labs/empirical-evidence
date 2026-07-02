@@ -42,6 +42,13 @@ def test_build_pair_example_target_is_flat_and_parseable(story):
     assert parsed["stuck_threshold"] == 5
 
 
+def test_map_pair_example_tagged_nav_by_default(story):
+    source = _winner(reward=5, score=10.0, stuck=3)
+    ex = build_pair_example(source, {**base_genome(), "stuck_threshold": 5}, story)
+    assert ex["domains"] == ["nav"]
+    assert set(ex) == {"messages", "domains"}
+
+
 def test_build_dataset_pairs_weaker_to_best(story):
     winners = [
         _winner(reward=6, score=90.0, stuck=15),  # best

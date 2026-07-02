@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 from autotune.config import Config, load_config
 from autotune.genome import PARAM_BOUNDS, base_genome, clamp_params
-from autotune.nudge_sft import Winner, assemble_corpus, write_sft_data
+from autotune.nudge_sft import Winner, assemble_corpus, write_corpus, write_sft_data
 from autotune.rollout import run_batch
 from autotune.scenario import NAV_PARAM_KEYS, mutate_nav_params
 from autotune.story import load_story
@@ -97,11 +97,13 @@ def run_harvest(  # pragma: no cover - subprocess driver, exercised by the smoke
         print(f"[harvest] {Path(state).name}: {len(rollouts)} rollouts, {on_story} on-story")
 
     examples = assemble_corpus(winners_by_state, story)
+    corpus_path = write_corpus(cfg.storage.sft_dir / "corpus.jsonl", examples)
     train_path, valid_path = write_sft_data(cfg.storage.sft_dir, examples, seed=seed)
     return {
         "states": len(state_paths),
         "genomes": len(population),
         "examples": len(examples),
+        "corpus_path": str(corpus_path),
         "train_path": str(train_path),
         "valid_path": str(valid_path),
     }
