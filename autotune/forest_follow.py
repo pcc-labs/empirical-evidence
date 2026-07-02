@@ -46,6 +46,16 @@ BEATS = [
 ]
 
 _BATTLE_TURN_CAP = 60  # hard cap on run_battle_turn calls per encounter (avoid Struggle deadlock)
+# Ground-truth crossing path minted by the flood-fill that first crossed (scratch_flood3.py).
+ROUTE_DEFAULT = str(Path(__file__).parent / "routes" / "forest_cross_path.json")
+
+
+def _dir_to(a: tuple[int, int], b: tuple[int, int]) -> str:
+    """Direction of the dominant axis from a toward b (exact for adjacent tiles)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    if abs(dx) >= abs(dy) and dx:
+        return "right" if dx > 0 else "left"
+    return "down" if dy > 0 else "up"
 
 
 def _import_pk():
@@ -76,12 +86,19 @@ def follow_once(
     worldmap_out: str | None = None,
     out_state: str | None = None,
     shot: str | None = None,
+    route: str | None = None,
 ) -> dict:
     """Run one genome-driven forest crossing. Returns ``{events, fitness, crossed, ...}``.
 
-    Navigation is hand-driven by ``BEATS``; battles are handed to the agent's genome-driven policy,
-    so ``genome`` (which becomes ``EVOLVE_PARAMS`` for the agent) is what varies survival between
+    Navigation is hand-driven; battles are handed to the agent's genome-driven policy, so
+    ``genome`` (which becomes ``EVOLVE_PARAMS`` for the agent) is what varies survival between
     runs. ``events`` is the game_events-shaped stream ``forest_story.score_forest`` reads.
+
+    With ``route`` (a JSON file with a ``path`` list of [x, y] tiles — see
+    ``states/forest_cross_path.json``, extracted from the ground-truth flood-fill that crossed),
+    navigation follows that tile path to the (1,0) exit warp and on through the north gate to
+    Route 2. Without it, the legacy walkthrough ``BEATS`` + exit dash drive (which is known to
+    wedge — the dash oscillates on the far-left column).
     """
     os.environ["EVOLVE_PARAMS"] = json.dumps(genome)  # ingested by PokemonAgent at construction
     PokemonAgent, WorldMap = _import_pk()
@@ -233,7 +250,76 @@ def follow_once(
     crossed = False
     stuck_in_battle = False
 
-    for head, bias, cond in BEATS:
+    route_tiles: list[tuple[int, int]] | None = None
+    if route and Path(route).exists():
+        route_tiles = [tuple(p) for p in json.loads(Path(route).read_text())["path"]]
+
+    if route_tiles:
+        path_index = {p: i for i, p in enumerate(route_tiles)}
+        idx = 0
+        blocked = 0
+        while step["n"] < max_steps:
+            step["n"] += 1
+            if bt():
+                post_map = resolve_battle()
+                note_map(post_map)
+                if bt():
+                    stuck_in_battle = True
+                    break
+                continue
+            m, x, y, tb = ow()
+            note_map(m)
+            if m == 47:  # north gate: climb column x=4 to y=1, sidle right to the door at x=5, up
+                if y > 1 and x != 4:
+                    ag.controller.move("left" if x > 4 else "right")
+                elif y > 1:
+                    ag.controller.move("up")
+                elif x < 5:
+                    ag.controller.move("right")
+                else:
+                    ag.controller.move("up")
+                continue
+            if m != FOREST:
+                crossed = m in EXIT_MAPS
+                break
+            if tb:
+                txt = ag.memory.read_dialogue()
+                if "TRAINER" in txt.upper() or "TIPS" in txt.upper():
+                    events.append({"event_type": "discovery", "turn": step["n"],
+                                   "data": {"text": txt, "kind": "sign"}})
+                ag.controller.mash_a(3, delay=15)
+                continue
+            if not trace or trace[-1] != (x, y):
+                trace.append((x, y))
+            ag.collision_map.update(ag.pyboy)
+            ag.world.observe(FOREST, x, y, ag.collision_map.grid)
+            pos = (x, y)
+            if pos in path_index:
+                idx = max(idx, path_index[pos])
+            if idx + 1 >= len(route_tiles):
+                ag.controller.move("up")  # at the exit approach — nudge onto the (1,0) warp
+                continue
+            if step_move(_dir_to(pos, route_tiles[idx + 1])):
+                blocked = 0
+                continue
+            # Blocked. Two invisible traps live here (learned from the flood-fill ground truth):
+            # a catcher's sight-line challenge dialogue locks movement with battle_type still 0
+            # and text_box_active reading FALSE — mash A to advance it into the trainer battle;
+            # and a plain-dialogue NPC standing on the tile — the A presses OPEN his text, and an
+            # open box also freezes NPC wandering, so close it with B and wait him out.
+            ag.controller.mash_a(3, delay=25)
+            ag.controller.wait(15)
+            if bt():
+                continue
+            ag.controller.press("b")
+            ag.controller.wait(20)
+            ag.controller.press("b")
+            ag.controller.wait(80)
+            blocked += 1
+            if blocked >= 25:
+                break  # genuinely wedged on the route
+
+    for head, bias, cond in BEATS if route_tiles is None else []:
         blocked = 0
         sign_seen = False
         bag_at_beat = sum(q for _, q in ag.memory.read_bag_items())
@@ -289,12 +375,12 @@ def follow_once(
         if crossed or stuck_in_battle:
             break
 
-    # Exit dash: the BEATS get us into the far-left area but usually not onto the warp at (2,0).
-    # Greedily head for it — climb to the top edge (y->0), then sidle to x=2 — with wall-sliding
-    # and battle handling, until we leave the forest or run out of steps.
+    # Exit dash (legacy BEATS mode only): the BEATS get us into the far-left area but usually not
+    # onto the warp. Greedily head for it — climb to the top edge (y->0), then sidle — with
+    # wall-sliding and battle handling, until we leave the forest or run out of steps.
     target = (2, 0)
     dash_blocked = 0
-    while not crossed and not stuck_in_battle and step["n"] < max_steps:
+    while route_tiles is None and not crossed and not stuck_in_battle and step["n"] < max_steps:
         step["n"] += 1
         if bt():
             post_map = resolve_battle()
@@ -388,7 +474,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--worldmap-out", default=None)
     parser.add_argument("--out-state", default=None)
     parser.add_argument("--out", default=None, help="Write the result JSON here (else stdout).")
+    parser.add_argument("--route", default=None,
+                        help=f"Tile-path JSON to follow (default: {ROUTE_DEFAULT} if present; "
+                             "pass --route '' to force the legacy BEATS nav).")
     args = parser.parse_args(argv)
+
+    route = args.route
+    if route is None and Path(ROUTE_DEFAULT).exists():
+        route = ROUTE_DEFAULT
 
     genome = json.loads(os.environ.get("EVOLVE_PARAMS") or "{}")
     if not genome:
@@ -402,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         worldmap_in=args.worldmap_in,
         worldmap_out=args.worldmap_out,
         out_state=args.out_state,
+        route=route or None,
     )
     payload = {"genome": genome, **result}
     if args.out:
