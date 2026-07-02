@@ -82,3 +82,23 @@ def test_discover_checkpoints_no_final_file(tmp_path):
     checkpoints = discover_checkpoints(tmp_path)
 
     assert [label for label, _ in checkpoints] == ["100"]
+
+
+def test_discover_checkpoints_peft_layout(tmp_path):
+    (tmp_path / "checkpoint-10").mkdir()
+    (tmp_path / "checkpoint-10" / "adapter_model.safetensors").write_bytes(b"")
+    (tmp_path / "checkpoint-2").mkdir()
+    (tmp_path / "checkpoint-2" / "adapter_model.safetensors").write_bytes(b"")
+    (tmp_path / "adapter_model.safetensors").write_bytes(b"")
+    ckpts = discover_checkpoints(tmp_path)
+    assert [label for label, _ in ckpts] == ["2", "10", "final"]
+    assert ckpts[-1][1] == tmp_path / "adapter_model.safetensors"
+
+
+def test_discover_checkpoints_mlx_layout_wins(tmp_path):
+    (tmp_path / "0000100_adapters.safetensors").write_bytes(b"")
+    (tmp_path / "adapters.safetensors").write_bytes(b"")
+    (tmp_path / "checkpoint-5").mkdir()
+    (tmp_path / "checkpoint-5" / "adapter_model.safetensors").write_bytes(b"")
+    ckpts = discover_checkpoints(tmp_path)
+    assert [label for label, _ in ckpts] == ["100", "final"]

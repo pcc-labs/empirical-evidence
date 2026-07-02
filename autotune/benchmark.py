@@ -56,6 +56,26 @@ def stage_checkpoint(adapter_dir: Path, label: str, ckpt_path: Path) -> Path:
     return staged
 
 
+def discover_adapter_dirs(adapter_dir: Path) -> list[tuple[str, Path]]:
+    """Every checkpoint as ``(label, ready-to-load adapter dir)`` for ``make_proposer``.
+
+    mlx numbered checkpoints are bare safetensors files, so they're staged via
+    ``stage_checkpoint``; PEFT ``checkpoint-N/`` dirs already carry ``adapter_config.json`` +
+    ``adapter_model.safetensors`` and load as-is; ``"final"`` is ``adapter_dir`` itself on both
+    backends.
+    """
+    adapter_dir = Path(adapter_dir)
+    dirs: list[tuple[str, Path]] = []
+    for label, path in discover_checkpoints(adapter_dir):
+        if label == "final":
+            dirs.append((label, adapter_dir))
+        elif path.name == "adapter_model.safetensors":
+            dirs.append((label, path.parent))
+        else:
+            dirs.append((label, stage_checkpoint(adapter_dir, label, path)))
+    return dirs
+
+
 def format_trend(reports: list[tuple[str, EvalReport]]) -> str:
     """A compact table of proposer story reward per checkpoint against the shared heuristic."""
     if not reports:
@@ -111,7 +131,7 @@ def run_benchmark(  # pragma: no cover - subprocess/rollout sweep, exercised by 
     Baseline and heuristic rollouts are adapter-independent, so they run once per state and are
     shared; only the proposer genome (and its rollout) is recomputed per checkpoint.
     """
-    checkpoints = discover_checkpoints(adapter_dir)
+    checkpoints = discover_adapter_dirs(adapter_dir)
     if not checkpoints:
         raise SystemExit(f"No checkpoints found in {adapter_dir} to benchmark.")
 
@@ -125,8 +145,7 @@ def run_benchmark(  # pragma: no cover - subprocess/rollout sweep, exercised by 
         heuristic_verdicts.append(_run_from(cfg, h_genome, state, "heuristic", max_turns))
         print(f"[bench] {Path(state).name}: baseline reward={baseline.story_reward}")
 
-        for label, ckpt_path in checkpoints:
-            staged = stage_checkpoint(adapter_dir, label, ckpt_path)
+        for label, staged in checkpoints:
             proposer = make_proposer(cfg, staged)
             p_genome = propose_next_genome(
                 base_genome(), baseline, story, proposer=proposer, seed=seed

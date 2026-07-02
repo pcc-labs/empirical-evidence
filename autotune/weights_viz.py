@@ -90,20 +90,35 @@ def plot_norm_trends(
 
 
 _CHECKPOINT_RE = re.compile(r"^(\d+)_adapters\.safetensors$")
+_PEFT_DIR_RE = re.compile(r"^checkpoint-(\d+)$")
 
 
 def discover_checkpoints(adapter_dir: Path) -> list[tuple[str, Path]]:
+    """Every checkpoint's safetensors under ``adapter_dir``, ordered, final last.
+
+    Knows both training layouts: mlx (``NNNN_adapters.safetensors`` files + final
+    ``adapters.safetensors``) and PEFT/cuda (``checkpoint-N/adapter_model.safetensors`` dirs +
+    final ``adapter_model.safetensors``). mlx entries win when both exist.
+    """
     numbered: list[tuple[int, Path]] = []
     for candidate in adapter_dir.glob("*_adapters.safetensors"):
         match = _CHECKPOINT_RE.match(candidate.name)
         if match is not None:
             numbered.append((int(match.group(1)), candidate))
+    if not numbered:
+        for candidate in adapter_dir.glob("checkpoint-*/adapter_model.safetensors"):
+            match = _PEFT_DIR_RE.match(candidate.parent.name)
+            if match is not None:
+                numbered.append((int(match.group(1)), candidate))
     numbered.sort(key=lambda item: item[0])
 
     checkpoints: list[tuple[str, Path]] = [(str(step), path) for step, path in numbered]
     final = adapter_dir / "adapters.safetensors"
+    peft_final = adapter_dir / "adapter_model.safetensors"
     if final.exists():
         checkpoints.append(("final", final))
+    elif peft_final.exists():
+        checkpoints.append(("final", peft_final))
     return checkpoints
 
 

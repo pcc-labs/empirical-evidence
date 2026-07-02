@@ -1,4 +1,4 @@
-from autotune.benchmark import format_trend, stage_checkpoint
+from autotune.benchmark import discover_adapter_dirs, format_trend, stage_checkpoint
 from autotune.eval_proposer import EvalReport
 
 
@@ -63,3 +63,24 @@ def test_format_trend_lists_checkpoints_in_order_with_verdicts():
 
 def test_format_trend_empty():
     assert format_trend([]) == "no checkpoints to benchmark"
+
+
+def test_discover_adapter_dirs_peft(tmp_path):
+    (tmp_path / "checkpoint-10").mkdir()
+    (tmp_path / "checkpoint-10" / "adapter_model.safetensors").write_bytes(b"")
+    (tmp_path / "adapter_model.safetensors").write_bytes(b"")
+    dirs = discover_adapter_dirs(tmp_path)
+    assert dirs == [("10", tmp_path / "checkpoint-10"), ("final", tmp_path)]
+
+
+def test_discover_adapter_dirs_mlx_stages_numbered(tmp_path):
+    import json
+
+    (tmp_path / "0000100_adapters.safetensors").write_bytes(b"")
+    (tmp_path / "adapters.safetensors").write_bytes(b"")
+    (tmp_path / "adapter_config.json").write_text(json.dumps({}))
+    dirs = discover_adapter_dirs(tmp_path)
+    assert [label for label, _ in dirs] == ["100", "final"]
+    staged = dict(dirs)["100"]
+    assert (staged / "adapters.safetensors").is_symlink()
+    assert dict(dirs)["final"] == tmp_path

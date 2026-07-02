@@ -37,11 +37,15 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def build_lora_config(
-    cfg: Config, data_dir: Path, adapter_dir: Path, iters: int | None = None
+    cfg: Config,
+    data_dir: Path,
+    adapter_dir: Path,
+    iters: int | None = None,
+    save_steps: int | None = None,
 ) -> dict:
     """Assemble an mlx_lm.lora config dict from the Mac profile + model config."""
     profile = cfg.profile
-    return {
+    config = {
         "model": cfg.model.base_model,
         "train": True,
         "data": str(Path(data_dir).resolve()),
@@ -61,6 +65,9 @@ def build_lora_config(
             "dropout": profile.lora_dropout,
         },
     }
+    if save_steps is not None:
+        config["save_every"] = save_steps
+    return config
 
 
 def write_config(config: dict, path: Path) -> Path:
@@ -71,10 +78,14 @@ def write_config(config: dict, path: Path) -> Path:
 
 
 def _train_mlx(  # pragma: no cover - subprocess driver, exercised by the smoke run
-    cfg: Config, data_dir: Path, adapter_dir: Path, iters: int | None
+    cfg: Config,
+    data_dir: Path,
+    adapter_dir: Path,
+    iters: int | None,
+    save_steps: int | None = None,
 ) -> Path:
     """Run LoRA SFT via ``mlx_lm lora`` as a subprocess (Apple Silicon)."""
-    config = build_lora_config(cfg, data_dir, adapter_dir, iters)
+    config = build_lora_config(cfg, data_dir, adapter_dir, iters, save_steps)
     config_path = write_config(config, cfg.storage.out_dir / "sft.lora.yaml")
     cmd = ["uv", "run", "python", "-m", "mlx_lm", "lora", "--config", str(config_path.resolve())]
     print(f"[train_sft] {' '.join(cmd)}")
@@ -109,7 +120,11 @@ def _patch_chat_template_disable_thinking(out_dir: Path) -> None:
 
 
 def _train_cuda(  # pragma: no cover - GPU driver, exercised by the smoke run
-    cfg: Config, data_dir: Path, adapter_dir: Path, iters: int | None
+    cfg: Config,
+    data_dir: Path,
+    adapter_dir: Path,
+    iters: int | None,
+    save_steps: int | None = None,
 ) -> Path:
     """Train a bf16 LoRA adapter with TRL's SFTTrainer + PEFT. ``iters`` overrides max steps."""
     # Reduce CUDA memory fragmentation; must be set before torch imports.
@@ -163,6 +178,7 @@ def _train_cuda(  # pragma: no cover - GPU driver, exercised by the smoke run
         gradient_checkpointing=profile.gradient_checkpointing,
         logging_steps=10,
         report_to="none",
+        **({"save_strategy": "steps", "save_steps": save_steps} if save_steps else {}),
     )
     trainer = SFTTrainer(
         model=model, args=args, train_dataset=dataset, processing_class=tokenizer
@@ -176,13 +192,15 @@ def _train_cuda(  # pragma: no cover - GPU driver, exercised by the smoke run
     return adapter_dir
 
 
-def train(cfg: Config, data_dir: Path, iters: int | None = None) -> Path:
+def train(
+    cfg: Config, data_dir: Path, iters: int | None = None, save_steps: int | None = None
+) -> Path:
     """Run LoRA SFT on the active backend and return the adapter directory."""
     adapter_dir = cfg.storage.adapter_dir
     adapter_dir.mkdir(parents=True, exist_ok=True)
     if cfg.backend == "cuda":
-        return _train_cuda(cfg, data_dir, adapter_dir, iters)
-    return _train_mlx(cfg, data_dir, adapter_dir, iters)
+        return _train_cuda(cfg, data_dir, adapter_dir, iters, save_steps)
+    return _train_mlx(cfg, data_dir, adapter_dir, iters, save_steps)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -191,12 +209,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--iters", type=int, default=None, help="override training iters/max-steps"
     )
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        default=None,
+        help="checkpoint every N steps (numbered checkpoints for weights_viz/benchmark)",
+    )
     args = parser.parse_args(argv)
 
     cfg = load_config()
     data_dir = Path(args.data_dir) if args.data_dir else cfg.storage.sft_dir
     print(f"[train_sft] backend={cfg.backend} profile={cfg.profile.name}")
-    adapter = train(cfg, data_dir, iters=args.iters)
+    adapter = train(cfg, data_dir, iters=args.iters, save_steps=args.save_steps)
     print(f"[train_sft] adapter written to {adapter}")
     return 0
 
