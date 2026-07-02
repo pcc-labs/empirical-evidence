@@ -6,7 +6,15 @@ out-of-order reward.
 
 from __future__ import annotations
 
-from autotune.forest_story import extract_forest_signals, score_forest
+from autotune.forest_story import (
+    BEAT_DOMAINS,
+    DOMAINS,
+    FOREST_BEATS,
+    domain_scores,
+    extract_forest_signals,
+    pair_domains,
+    score_forest,
+)
 
 
 def _ow(map_id, bag=None, turn=0):
@@ -145,3 +153,33 @@ def test_exit_after_all_catchers_is_credited():
     assert v.per_beat[7] == 1
     # enter + catcher#1 + catcher#2 + exit = 4
     assert v.beats_passed == 4
+
+
+def test_every_beat_has_exactly_one_domain():
+    assert set(BEAT_DOMAINS) == {b.beat_id for b in FOREST_BEATS}
+    assert set(BEAT_DOMAINS.values()) <= set(DOMAINS)
+
+
+def test_domain_scores_split_by_domain():
+    # enter + 2 catcher wins + sign + exit; no bag_count in telemetry
+    v = score_forest([_ow(51), _trainer_win(), _trainer_win(), _sign(), _ow(13)])
+    assert domain_scores(v) == {"nav": 2, "battle": 2, "discovery": 1}
+
+
+def test_domain_scores_zero_outside_forest():
+    v = score_forest([_ow(12)])
+    assert domain_scores(v) == {"nav": 0, "battle": 0, "discovery": 0}
+
+
+def test_pair_domains_names_improved_domains():
+    weak = score_forest([_ow(51)])
+    strong = score_forest([_ow(51), _trainer_win(), _ow(13)])
+    assert pair_domains(weak, strong) == ("nav", "battle")
+
+
+def test_pair_domains_tie_falls_back_to_battle():
+    # Same beats on both sides: the improvement was a survival tiebreak
+    # (trainer_wins/turns in _forest_rank), which is battle domain.
+    a = score_forest([_ow(51)])
+    b = score_forest([_ow(51)])
+    assert pair_domains(a, b) == ("battle",)

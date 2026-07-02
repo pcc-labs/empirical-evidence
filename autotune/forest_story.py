@@ -64,6 +64,45 @@ FOREST_BEATS: tuple[ForestBeat, ...] = (
 # Route 2 triggering only ~1 catcher sight-line (verified 155-turn crossing, 2026-07-01). The
 # exit beat is a bare exit observation; beats 3-4 already reward the fights themselves.
 
+# --------------------------------------------------------------------------- #
+# Behavior domains (issue #10): each beat exercises exactly one domain.        #
+# --------------------------------------------------------------------------- #
+
+DOMAINS: tuple[str, ...] = ("nav", "battle", "discovery")
+
+# nav = map transitions (enter/exit), battle = the bug-catcher fights, discovery = items + sign.
+BEAT_DOMAINS: dict[int, str] = {
+    1: "nav",
+    2: "discovery",
+    3: "battle",
+    4: "battle",
+    5: "discovery",
+    6: "discovery",
+    7: "discovery",
+    8: "nav",
+}
+
+
+def domain_scores(verdict: ForestVerdict) -> dict[str, int]:
+    """Per-domain count of beats reached: nav 0..2, battle 0..2, discovery 0..4. Pure."""
+    scores = dict.fromkeys(DOMAINS, 0)
+    for beat, passed in zip(FOREST_BEATS, verdict.per_beat):
+        if passed:
+            scores[BEAT_DOMAINS[beat.beat_id]] += 1
+    return scores
+
+
+def pair_domains(source: ForestVerdict, target: ForestVerdict) -> tuple[str, ...]:
+    """Domains an improvement pair teaches: those where the target out-scored the source.
+
+    When no domain differs, the pair was ranked up by ``_forest_rank``'s survival tiebreaks
+    (trainer_wins, fewer turns) — battle-domain levers — so tag it ``("battle",)`` rather than
+    dropping it untagged.
+    """
+    src, tgt = domain_scores(source), domain_scores(target)
+    improved = tuple(d for d in DOMAINS if tgt[d] > src[d])
+    return improved or ("battle",)
+
 
 @dataclass(frozen=True)
 class ForestVerdict:
