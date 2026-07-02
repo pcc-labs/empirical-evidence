@@ -105,3 +105,43 @@ demonstrating learning needs a task where the thing being tuned controls the out
 reward cleanly measures progress. Tuning the 12-parameter genome on early-game Pokemon is not that
 task. The next meaningful step, if pursued, is to move the lever from the heuristic genome to the
 decision policy, and to define a directional progress reward.
+
+## 2026-07-02 domain-tagged corpus smoke
+
+End-to-end smoke of the domain-tagged corpus pipeline (harvest -> merge -> train_sft -> per-domain
+benchmark) on the cuda box (RTX 5090). Three findings plus the smoke evidence:
+
+1. **Canonical-route crossings are genome-invariant at lv13.** Every survival genome swept over
+   the canonical forest route crossed identically (reward 3.0, 154 turns, full HP throughout), so
+   the harvest had no gradient. Survival pairs must be harvested in legacy BEATS nav
+   (`forest_harvest --route ''`, passthrough landed as `fda7d6f`), where genomes produce real
+   spread (turns 310-414; one flee-late genome fainted at 0/37 HP). The canonical route remains
+   the right default for the benchmark itself.
+2. **Nav-tagged pairs are unobtainable with today's agent+states.** pokemon-kafka's agent.py does
+   consume `EVOLVE_PARAMS`, but deliberately pathological nav params (`stuck_threshold: 20`,
+   `waypoint_skip_distance: 1`, `bt_max_attempts: 1`, ...) vs the default genome from
+   `route2.state` produce byte-identical verdicts at both 400 and 1200 turns (story_reward=6.0,
+   score=8515.000@400t / 8435.000@1200t, final_map=51): nav params only bifurcate behavior when
+   the stuck/backtrack/door branches fire, and the agent navigates cleanly. Blocked until state
+   capture or pk-side work (both out of scope) — parallel to the accepted bag_count gap for
+   discovery beats.
+3. **The smoke caught a real OOM:** benchmarking 4 checkpoints in one process accumulated a full
+   base-model copy per checkpoint (~30 GiB) via generate.py's model cache; fixed by evicting the
+   resident model on adapter switch + checkpoint-outer sweep (`4d973b1`).
+
+Merge census: `{"battle": 5}` (5 pairs from a 6-genome BEATS sweep; no nav or discovery rows).
+
+```
+forest benchmark: proposer genome per checkpoint vs base genome (baseline reward 3.00)
+  checkpoint   reward    nav  battle  discov  crossed
+    baseline     3.00   2.00    1.00    0.00     1.00
+          10     3.00   2.00    1.00    0.00     1.00
+          20     3.00   2.00    1.00    0.00     1.00
+          30     3.00   2.00    1.00    0.00     1.00
+          40     3.00   2.00    1.00    0.00     1.00
+       final     3.00   2.00    1.00    0.00     1.00
+```
+
+Caveat: 5 battle-only pairs at 40 iters is a mechanical smoke of the pipeline (train loss ~0.002,
+memorization of 4 rows), not a learned policy — the flat trend table is expected and must not be
+read as signal. Artifacts: `out/forest_benchmark_trends.png`, `out/lora_weight_trends.png`.
