@@ -145,6 +145,9 @@ def run_benchmark(  # pragma: no cover - subprocess/rollout sweep, exercised by 
         heuristic_verdicts.append(_run_from(cfg, h_genome, state, "heuristic", max_turns))
         print(f"[bench] {Path(state).name}: baseline reward={baseline.story_reward}")
 
+        # State-outer/checkpoint-inner reloads the model per (state, checkpoint) pair; correct
+        # but slower on cuda than checkpoint-outer since generate._load_cuda now evicts and
+        # reloads on every adapter switch instead of accumulating memory.
         for label, staged in checkpoints:
             proposer = make_proposer(cfg, staged)
             p_genome = propose_next_genome(

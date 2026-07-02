@@ -137,16 +137,22 @@ def run_forest_benchmark(  # pragma: no cover - emulator sweep, exercised by the
     per_ckpt: dict[str, list[ForestVerdict]] = {label: [] for label, _ in checkpoints}
     parsed_ok: dict[str, bool] = {label: True for label, _ in checkpoints}
 
+    baselines: list[tuple[str, ForestVerdict]] = []
     for state in state_paths:
         base_result = follow_once(
             rom, state, base_genome(), max_steps=max_steps, worldmap_in=worldmap_in, route=route
         )
         base_verdict = score_forest(base_result["events"])
         baseline_verdicts.append(base_verdict)
+        baselines.append((state, base_verdict))
         print(f"[forest-bench] {Path(state).name}: baseline reward={base_verdict.reward}")
 
-        for label, ckpt_dir in checkpoints:
-            proposer = make_proposer(cfg, ckpt_dir, system=_FOREST_SYSTEM)
+    # Checkpoint-outer so each adapter is loaded exactly once: the model cache holds ONE
+    # resident model, and cycling checkpoints inside the state loop would reload per pair
+    # (and, before eviction existed, accumulated one 6 GiB model per checkpoint and OOMed).
+    for label, ckpt_dir in checkpoints:
+        proposer = make_proposer(cfg, ckpt_dir, system=_FOREST_SYSTEM)
+        for state, base_verdict in baselines:
             genome, parsed = propose_forest_genome(proposer, base_genome(), base_verdict)
             parsed_ok[label] = parsed_ok[label] and parsed
             result = follow_once(

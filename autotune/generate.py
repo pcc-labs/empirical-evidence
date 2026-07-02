@@ -22,6 +22,7 @@ IO/GPU wrapper — exercised by the smoke run, not unit tests.
 from __future__ import annotations
 
 import argparse
+import gc
 import re
 import sys
 from collections.abc import Callable
@@ -38,17 +39,28 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # MLX backend (Apple Silicon)
 # ---------------------------------------------------------------------------
 
-# Cache the loaded (model, tokenizer) per adapter path so eval's repeated calls don't reload.
+# Single-entry cache: holds THE most recently used adapter's (model, tokenizer), not one per
+# adapter. Repeated calls for the same adapter stay cheap (cache hit); switching adapters evicts
+# the resident model and swaps in the new one instead of accumulating one per adapter.
 _MLX_CACHE: dict[str, tuple] = {}
 
 
 def _load_mlx(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU driver
-    """Load base model + trained adapter (if present) via mlx_lm once, cached by adapter path."""
+    """Load base model + trained adapter (if present) via mlx_lm, cached by adapter path.
+
+    The cache is single-entry: on a miss, whatever model is currently resident is evicted before
+    the new one loads, so switching adapters swaps the resident model rather than accumulating
+    one per adapter.
+    """
     key = str(Path(adapter_path).resolve())
     if key in _MLX_CACHE:
         return _MLX_CACHE[key]
 
     from mlx_lm import load
+
+    # Evict the previously cached model (if any) before loading the new one.
+    _MLX_CACHE.clear()
+    gc.collect()
 
     if Path(adapter_path).exists():
         model, tokenizer = load(cfg.model.base_model, adapter_path=key)
@@ -89,18 +101,33 @@ def _generate_mlx(
 # CUDA backend (HF transformers + PEFT)
 # ---------------------------------------------------------------------------
 
-# Cache the loaded (model, tokenizer) per adapter path so eval's repeated calls don't reload.
+# Single-entry cache: holds THE most recently used adapter's (model, tokenizer), not one per
+# adapter. Repeated calls for the same adapter stay cheap (cache hit); switching adapters evicts
+# the resident model and swaps in the new one instead of accumulating one ~6 GiB bf16 model per
+# adapter and OOMing the card.
 _CUDA_CACHE: dict[str, tuple] = {}
 
 
 def _load_cuda(cfg: Config, adapter_path: Path):  # pragma: no cover - GPU driver
-    """Load base model + PEFT adapter (if present) onto the GPU once, cached by adapter path."""
+    """Load base model + PEFT adapter (if present) onto the GPU, cached by adapter path.
+
+    The cache is single-entry: on a miss, whatever model is currently resident is evicted
+    (cleared from the cache, refs dropped, GC + ``torch.cuda.empty_cache()``) before the new
+    model loads, so switching adapters swaps the resident model rather than accumulating one
+    ~6 GiB bf16 model per adapter and OOMing the card.
+    """
     key = str(Path(adapter_path).resolve())
     if key in _CUDA_CACHE:
         return _CUDA_CACHE[key]
 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    # Evict the previously cached model (if any) before loading the new one — the cache is
+    # single-entry, so we must free the GPU memory first.
+    _CUDA_CACHE.clear()
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # Single 3B model on a 32 GB card — load straight to the GPU. device_map="auto" pulls in
     # accelerate's dispatch + quantizer path, which mis-fires under transient memory pressure.
