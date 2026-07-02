@@ -1175,8 +1175,8 @@ Run: `uv run python smoke_cuda.py` — expect a CUDA-available confirmation.
 
 - [ ] **Step 2: Forest harvest (battle/discovery pairs)**
 
-Run: `uv run python -m autotune.forest_harvest --run-thresholds 0.1,0.35,0.6 --heal-thresholds 0.25 --max-steps 900 --out-dir out/forest_sft 2>&1 | tail -20`
-Expected: `[harvest] N SFT pairs ...`, `out/forest_sft/corpus.jsonl` exists with a `domains` key on every row. If it reports "no gradient", re-run with `--max-steps 1500` and thresholds `0.05,0.3,0.7`.
+Run: `uv run python -m autotune.forest_harvest --run-thresholds 0.1,0.35,0.6 --heal-thresholds 0.25 --max-steps 900 --out-dir out/forest_sft --route '' 2>&1 | tail -20`
+Expected: `[harvest] N SFT pairs ...`, `out/forest_sft/corpus.jsonl` exists with a `domains` key on every row. If it reports "no gradient", re-run with `--max-steps 1500` and thresholds `0.05,0.3,0.7`. (`--route ''` forces legacy BEATS nav: on the canonical route every genome crosses identically at full HP — zero gradient, no pairs; BEATS-mode runs wedge at genome-dependent depths and turn counts, which is the spread the pairs need.)
 
 - [ ] **Step 3: Map-grained harvest (nav pairs)**
 
