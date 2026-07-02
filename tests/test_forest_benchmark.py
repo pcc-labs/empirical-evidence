@@ -44,18 +44,28 @@ def test_summarize_verdicts_means_domains_across_states():
     assert row.reward == 2.0  # (3 + 1) / 2
     assert row.domains == {"nav": 1.5, "battle": 0.5, "discovery": 0.0}
     assert row.crossed == 0.5
+    assert row.turns == 0.0  # omitted turns default to 0.0
+
+
+def test_summarize_verdicts_means_turns_across_states():
+    row = summarize_verdicts(
+        "100", [_verdict([_ENTER, _TWIN, _EXIT]), _verdict([_ENTER])], turns=[300.0, 100.0]
+    )
+    assert row.turns == 200.0
 
 
 def test_format_forest_trend_has_domain_columns():
     baseline = ForestBenchRow(
         label="baseline", reward=2.0, domains={"nav": 1.0, "battle": 1.0, "discovery": 0.0},
-        crossed=0.0, parsed=True,
+        crossed=0.0, parsed=True, turns=120.0,
     )
     row = ForestBenchRow(
         label="final", reward=4.0, domains={"nav": 2.0, "battle": 2.0, "discovery": 0.0},
-        crossed=1.0, parsed=False,
+        crossed=1.0, parsed=False, turns=380.0,
     )
     table = format_forest_trend(baseline, [row])
     assert "nav" in table and "battle" in table and "discov" in table
     assert "baseline" in table and "final" in table
+    assert "turns" in table
+    assert "120" in table and "380" in table
     assert "parse-fallback" in table  # unparsed rows are visibly flagged

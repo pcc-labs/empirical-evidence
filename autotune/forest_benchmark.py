@@ -41,6 +41,7 @@ class ForestBenchRow:
     domains: dict[str, float]  # mean per-domain sub-score
     crossed: float  # fraction of states crossed
     parsed: bool  # False if ANY state's proposer output was unparseable (fallback genome ran)
+    turns: float = 0.0  # mean turns survived across states — finer-grained than the beat flags
 
 
 def propose_forest_genome(
@@ -59,7 +60,10 @@ def propose_forest_genome(
 
 
 def summarize_verdicts(
-    label: str, verdicts: list[ForestVerdict], parsed: bool = True
+    label: str,
+    verdicts: list[ForestVerdict],
+    parsed: bool = True,
+    turns: list[float] | None = None,
 ) -> ForestBenchRow:
     """Mean the dense reward and per-domain sub-scores across states."""
     n = max(1, len(verdicts))
@@ -69,6 +73,7 @@ def summarize_verdicts(
         domains={d: sum(domain_scores(v)[d] for v in verdicts) / n for d in DOMAINS},
         crossed=sum(1 for v in verdicts if v.crossed) / n,
         parsed=parsed,
+        turns=(sum(turns) / max(1, len(turns))) if turns else 0.0,
     )
 
 
@@ -78,14 +83,14 @@ def format_forest_trend(baseline: ForestBenchRow, rows: list[ForestBenchRow]) ->
         "forest benchmark: proposer genome per checkpoint vs base genome "
         f"(baseline reward {baseline.reward:.2f})",
         f"  {'checkpoint':>10}  {'reward':>7}  {'nav':>5}  {'battle':>6}  {'discov':>6}  "
-        f"{'crossed':>7}",
+        f"{'crossed':>7}  {'turns':>6}",
     ]
     for r in [baseline] + rows:
         flag = "" if r.parsed else "  (parse-fallback)"
         lines.append(
             f"  {r.label:>10}  {r.reward:>7.2f}  {r.domains['nav']:>5.2f}  "
             f"{r.domains['battle']:>6.2f}  {r.domains['discovery']:>6.2f}  "
-            f"{r.crossed:>7.2f}{flag}"
+            f"{r.crossed:>7.2f}  {r.turns:>6.0f}{flag}"
         )
     return "\n".join(lines)
 
@@ -107,7 +112,15 @@ def plot_forest_trend(  # pragma: no cover - plotting, mirrors weights_viz.plot_
     ax.set_xlabel("checkpoint")
     ax.set_ylabel("mean forest sub-beats reached")
     ax.set_title("Forest reward by checkpoint, split by behavior domain")
-    ax.legend(loc="best")
+
+    ax2 = ax.twinx()
+    ax2.plot(labels, [r.turns for r in rows], marker="s", linestyle=":",
+             color="tab:brown", label="turns survived")
+    ax2.set_ylabel("mean turns survived")
+
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, loc="best")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -134,7 +147,9 @@ def run_forest_benchmark(  # pragma: no cover - emulator sweep, exercised by the
     route = ROUTE_DEFAULT if Path(ROUTE_DEFAULT).exists() else None
 
     baseline_verdicts: list[ForestVerdict] = []
+    baseline_turns: list[float] = []
     per_ckpt: dict[str, list[ForestVerdict]] = {label: [] for label, _ in checkpoints}
+    per_turns: dict[str, list[float]] = {label: [] for label, _ in checkpoints}
     parsed_ok: dict[str, bool] = {label: True for label, _ in checkpoints}
 
     baselines: list[tuple[str, ForestVerdict]] = []
@@ -144,6 +159,7 @@ def run_forest_benchmark(  # pragma: no cover - emulator sweep, exercised by the
         )
         base_verdict = score_forest(base_result["events"])
         baseline_verdicts.append(base_verdict)
+        baseline_turns.append(base_result["fitness"]["turns"])
         baselines.append((state, base_verdict))
         print(f"[forest-bench] {Path(state).name}: baseline reward={base_verdict.reward}")
 
@@ -160,14 +176,16 @@ def run_forest_benchmark(  # pragma: no cover - emulator sweep, exercised by the
             )
             verdict = score_forest(result["events"])
             per_ckpt[label].append(verdict)
+            per_turns[label].append(result["fitness"]["turns"])
             print(
                 f"[forest-bench] {Path(state).name}: checkpoint {label} "
                 f"reward={verdict.reward} domains={domain_scores(verdict)} parsed={parsed}"
             )
 
-    baseline = summarize_verdicts("baseline", baseline_verdicts)
+    baseline = summarize_verdicts("baseline", baseline_verdicts, turns=baseline_turns)
     rows = [
-        summarize_verdicts(label, per_ckpt[label], parsed_ok[label]) for label, _ in checkpoints
+        summarize_verdicts(label, per_ckpt[label], parsed_ok[label], turns=per_turns[label])
+        for label, _ in checkpoints
     ]
     return baseline, rows
 
