@@ -22,10 +22,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from autotune.config import load_config
-from autotune.forest_follow import follow_once
+from autotune.forest_follow import ROUTE_DEFAULT, follow_once
 from autotune.forest_story import score_forest
 from autotune.genome import base_genome
-from autotune.nudge_sft import ForestWinner, assemble_forest_corpus, write_sft_data
+from autotune.nudge_sft import ForestWinner, assemble_forest_corpus, write_corpus, write_sft_data
 
 
 def sweep_genomes(run_thresholds: list[float], heal_thresholds: list[float]) -> list[dict]:
@@ -59,8 +59,11 @@ def harvest(
 
     winners: list[ForestWinner] = []
     board: list[dict] = []
+    route = ROUTE_DEFAULT if Path(ROUTE_DEFAULT).exists() else None
     for i, genome in enumerate(genomes):
-        result = follow_once(rom, in_state, genome, max_steps=max_steps, worldmap_in=worldmap_in)
+        result = follow_once(
+            rom, in_state, genome, max_steps=max_steps, worldmap_in=worldmap_in, route=route
+        )
         verdict = score_forest(result["events"])
         winners.append(ForestWinner(params=genome, verdict=verdict, fitness=result["fitness"]))
         row = {
@@ -85,6 +88,7 @@ def harvest(
         crossed_any = any(w.verdict.crossed for w in winners)
         return {"examples": 0, "rewards_seen": rewards, "crossed_any": crossed_any}
 
+    corpus_path = write_corpus(out_dir / "corpus.jsonl", examples)
     train_path, valid_path = write_sft_data(out_dir, examples)
     print(f"[harvest] {len(examples)} SFT pairs from {len(winners)} runs "
           f"(rewards seen: {rewards}) -> {train_path}")
@@ -92,6 +96,7 @@ def harvest(
         "examples": len(examples),
         "rewards_seen": rewards,
         "crossed_any": any(w.verdict.crossed for w in winners),
+        "corpus": str(corpus_path),
         "train": str(train_path),
         "valid": str(valid_path),
     }
