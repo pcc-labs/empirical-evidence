@@ -1,0 +1,11 @@
+{
+  "base": {
+    "battle-outcome": 0.0,
+    "move-choice": 0.0
+  },
+  "passed": true,
+  "tuned": {
+    "battle-outcome": 1.0,
+    "move-choice": 0.5555555555555556
+  }
+}

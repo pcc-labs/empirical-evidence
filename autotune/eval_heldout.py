@@ -80,12 +80,21 @@ def _hf_predictor(model_id: str, adapter: str | None):  # pragma: no cover - GPU
 
     def predict(system: str, user: str) -> str:
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        ids = tok.apply_chat_template(msgs, add_generation_prompt=True, return_tensors="pt").to(
-            model.device
-        )
+        enc = tok.apply_chat_template(msgs, add_generation_prompt=True, return_tensors="pt")
+        attention_mask = None
+        if torch.is_tensor(enc):
+            ids = enc.to(model.device)
+        else:
+            enc = enc.to(model.device)
+            ids = enc["input_ids"]
+            attention_mask = enc.get("attention_mask")
         with torch.no_grad():
             out = model.generate(
-                ids, max_new_tokens=64, do_sample=False, pad_token_id=tok.eos_token_id
+                ids,
+                attention_mask=attention_mask,
+                max_new_tokens=64,
+                do_sample=False,
+                pad_token_id=tok.eos_token_id,
             )
         return tok.decode(out[0][ids.shape[1] :], skip_special_tokens=True)
 
