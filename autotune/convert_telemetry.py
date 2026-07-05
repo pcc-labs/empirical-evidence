@@ -309,26 +309,45 @@ def dedupe(examples: list[dict]) -> list[dict]:
 def balance(examples: list[dict], rng: random.Random, max_frac: float = 0.4) -> list[dict]:
     """Down-sample any domain above max_frac of the corpus (seeded).
 
-    Domains that already sit at or under max_frac of the original total are left
-    untouched. Each domain that started over max_frac is down-sampled, in one
-    pass, to the size that would make it exactly max_frac of the corpus once
-    combined with the untouched domains. A naive re-check-everything loop
-    cascades here: shrinking the dominant domain inflates every other domain's
-    *share* of the new, smaller total, which can then trip the same cap and
-    zero out domains that were never actually overrepresented.
+    Domains that already sit at or under max_frac of the *original* total are
+    left alone entirely -- they never become shrink candidates, no matter how
+    their share of the corpus shifts as other domains get resampled. Domains
+    that started over max_frac are down-sampled to fixed point: on each pass,
+    recompute the cap against the current (possibly already-shrunk) total,
+    pick the largest domain -- among the originally-over-cap set -- that is
+    still over that cap, and resample it down to the size that makes it
+    exactly max_frac of the corpus once combined with every other domain's
+    current size. Repeat until every originally-over-cap domain fits.
+
+    Recomputing against the shrinking total (rather than the original one) is
+    what makes this converge correctly when two or more domains are
+    simultaneously over cap: each domain's target reflects every other
+    domain's *current* size, not its original one. Restricting the candidate
+    set to the domains that were over cap *originally* is what stops the
+    cascade from reaching back and shrinking domains that were never
+    overrepresented -- e.g. a small domain whose share balloons only because
+    the dominant domain next to it got smaller.
     """
     by_domain: dict[str, list[dict]] = {}
     for ex in examples:
         by_domain.setdefault(ex["domain"], []).append(ex)
-    total = sum(len(v) for v in by_domain.values())
     if len(by_domain) > 1 and 0 < max_frac < 1:
-        for domain, rows in by_domain.items():
-            if len(rows) <= max_frac * total:
-                continue
+        total = sum(len(v) for v in by_domain.values())
+        over_cap = {d for d, rows in by_domain.items() if len(rows) > max_frac * total}
+        while over_cap:
+            total = sum(len(v) for v in by_domain.values())
+            still_over = [d for d in over_cap if len(by_domain[d]) > max_frac * total]
+            if not still_over:
+                break
+            domain = max(still_over, key=lambda d: len(by_domain[d]))
+            rows = by_domain[domain]
             rest = total - len(rows)
             target = int(max_frac / (1 - max_frac) * rest)
-            if target < len(rows):
-                by_domain[domain] = rng.sample(rows, target)
+            if rest > 0:
+                target = max(target, 1)
+            if target >= len(rows):
+                break  # safety net; shouldn't trigger given the over-cap check above
+            by_domain[domain] = rng.sample(rows, target)
     out = [ex for d in sorted(by_domain) for ex in by_domain[d]]
     return out
 

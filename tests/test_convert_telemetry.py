@@ -167,6 +167,21 @@ def test_balance_caps_dominant_domain():
     assert counts["battle-action"] <= 0.4 * total + 1
 
 
+def test_balance_caps_multiple_dominant_domains():
+    ex = _mk("a", 50) + _mk("b", 45) + _mk("c", 5)
+    balanced = balance(ex, random.Random(2), max_frac=0.4)
+    counts = {}
+    for e in balanced:
+        counts[e["domain"]] = counts.get(e["domain"], 0) + 1
+    total = sum(counts.values())
+    for domain, count in counts.items():
+        assert count <= 0.4 * total + 1, (domain, count, total)
+    assert counts["c"] == 5
+
+    balanced_again = balance(ex, random.Random(2), max_frac=0.4)
+    assert balanced == balanced_again
+
+
 def test_split_is_stratified_and_deterministic():
     ex = _mk("genome", 20) + _mk("narrator", 20)
     t1, v1 = split(ex, random.Random(7))
