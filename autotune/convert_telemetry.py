@@ -48,3 +48,32 @@ def chat(system: str, user: str, assistant: str, domain: str) -> dict:
         ],
         "domain": domain,
     }
+
+
+BATTLE_SYSTEM = (
+    "You are the battle advisor for a Pokemon Red agent. Answer with only the requested JSON."
+)
+
+
+def gen_battle_outcome(events: list[dict]) -> list[dict]:
+    """battle_outcome rows -> win prediction + fight/flee recommendation examples."""
+    out = []
+    for e in events:
+        if e.get("event_type") != "battle_outcome":
+            continue
+        d = e["data"]
+        moves = ", ".join(d["user_move_types"])
+        user = (
+            f"Battle start.\n"
+            f"Your Pokemon: {d['user_species']} (lv {d['user_level']}, "
+            f"HP {d['user_hp_start']}/{d['user_max_hp']}), move types: {moves}.\n"
+            f"Enemy: {d['enemy_species']} (lv {d['enemy_level']}, "
+            f"{d['enemy_type']} type). "
+            f"Level gap: {d['level_gap']:+d}. "
+            f"Healing available: {'yes' if d['had_healing'] else 'no'}.\n"
+            "Will the agent win this battle, and should it fight or flee? "
+            'Respond with JSON {"win": bool, "recommendation": "fight"|"flee"}.'
+        )
+        answer = json.dumps({"win": d["won"], "recommendation": "fight" if d["won"] else "flee"})
+        out.append(chat(BATTLE_SYSTEM, user, answer, "battle-outcome"))
+    return out
