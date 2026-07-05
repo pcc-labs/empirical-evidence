@@ -14,6 +14,9 @@ dependencies = [
     "pyyaml>=6.0",
     "pyboy==2.7.0",
     "pillow>=12.2.0",
+    "numpy>=2.1",
+    "safetensors>=0.8",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +49,9 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
 
 [tool.ruff]
 line-length = 100

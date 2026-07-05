@@ -20,7 +20,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from autotune.forest_story import ForestVerdict
+from autotune.forest_story import ForestVerdict, pair_domains
 from autotune.genome import PARAM_DESCRIPTIONS, clamp_params
 from autotune.nudge_steer import build_mutation_prompt
 from autotune.story import Story
@@ -49,11 +49,15 @@ def _rank(winner: Winner) -> tuple[float, float]:
     return (winner.verdict.story_reward, winner.verdict.score)
 
 
-def build_pair_example(source: Winner, target_params: dict, story: Story) -> dict:
+def build_pair_example(
+    source: Winner, target_params: dict, story: Story, domains: tuple[str, ...] = ("nav",)
+) -> dict:
     """One MLX-LM chat example: improve ``source``'s genome -> the better ``target_params``.
 
     The user turn is the exact prompt the loop uses at inference (``build_mutation_prompt``); the
-    assistant turn is the flat target genome JSON (parseable by ``parse_genome_response``).
+    assistant turn is the flat target genome JSON (parseable by ``parse_genome_response``). Tagged
+    ``("nav",)`` by default: the map-grained story reward is map progress, and the harvest
+    population varies only navigation params.
     """
     answer = clamp_params(target_params)
     return {
@@ -64,7 +68,8 @@ def build_pair_example(source: Winner, target_params: dict, story: Story) -> dic
                 "content": build_mutation_prompt(source.params, source.verdict, story),
             },
             {"role": "assistant", "content": json.dumps(answer)},
-        ]
+        ],
+        "domains": list(domains),
     }
 
 
@@ -122,6 +127,18 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def write_corpus(path: Path, examples: list[dict]) -> Path:
+    """Persist the TAGGED corpus (messages + domains) — the merge/census input, not train data."""
+    path = Path(path)
+    write_jsonl(path, examples)
+    return path
+
+
+def _strip_tags(rows: list[dict]) -> list[dict]:
+    """Training rows carry ONLY messages — domain tags are corpus metadata, not chat turns."""
+    return [{"messages": r["messages"]} for r in rows]
+
+
 def write_sft_data(
     sft_dir: Path,
     examples: list[dict],
@@ -133,9 +150,9 @@ def write_sft_data(
     sft_dir = Path(sft_dir)
     train_path = sft_dir / "train.jsonl"
     valid_path = sft_dir / "valid.jsonl"
-    write_jsonl(train_path, train)
+    write_jsonl(train_path, _strip_tags(train))
     # MLX-LM still expects valid.jsonl to exist; mirror train when too few examples to split.
-    write_jsonl(valid_path, valid or train)
+    write_jsonl(valid_path, _strip_tags(valid or train))
     return train_path, valid_path
 
 
@@ -205,9 +222,14 @@ Propose ONE modified genome that survives further through the forest (beat more 
 fainting, reach the exit). Return ONLY valid JSON with the same keys, nothing else."""
 
 
-def build_forest_pair_example(source: ForestWinner, target_params: dict) -> dict:
-    """One chat example: improve ``source``'s genome -> the stronger ``target_params``."""
-    answer = clamp_params(target_params)
+def build_forest_pair_example(source: ForestWinner, target: ForestWinner) -> dict:
+    """One chat example: improve ``source``'s genome -> the stronger ``target``'s genome.
+
+    Tagged with the behavior domains the improvement spans (``forest_story.pair_domains``) so a
+    union corpus can be censused or filtered per domain; ``write_sft_data`` strips the tag before
+    training.
+    """
+    answer = clamp_params(target.params)
     return {
         "messages": [
             {"role": "system", "content": _FOREST_SYSTEM},
@@ -216,7 +238,8 @@ def build_forest_pair_example(source: ForestWinner, target_params: dict) -> dict
                 "content": build_forest_mutation_prompt(source.params, source.verdict),
             },
             {"role": "assistant", "content": json.dumps(answer)},
-        ]
+        ],
+        "domains": list(pair_domains(source.verdict, target.verdict)),
     }
 
 
@@ -234,7 +257,7 @@ def build_forest_dataset(winners: list[ForestWinner]) -> list[dict]:
     target = max(in_forest, key=_forest_rank)
     target_rank = _forest_rank(target)
     return [
-        build_forest_pair_example(w, target.params)
+        build_forest_pair_example(w, target)
         for w in in_forest
         if _forest_rank(w) < target_rank and w.params != target.params
     ]

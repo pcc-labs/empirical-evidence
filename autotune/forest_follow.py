@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 FOREST = 51
@@ -77,6 +78,27 @@ def _import_pk():
         return PokemonAgent, WorldMap
 
 
+def _start_recorder(ag, record_dir: str, label: str | None, frame_interval: int):
+    """Wire pokemon-kafka's ``RunRecorder`` to this crossing's PyBoy screen.
+
+    Produces a self-contained viewer-format run (``events.jsonl`` + ``frames/*.png`` +
+    ``meta.json`` + ``summary.json``) so the Paper Traces viewer shows real Game Boy frames for a
+    forest crossing that is otherwise headless and frameless. ``recorder`` is importable once
+    ``_import_pk`` has put pokemon-kafka's ``scripts/`` on ``sys.path``.
+    """
+    from recorder import RunRecorder  # noqa: E402 — pk/scripts on sys.path via _import_pk()
+
+    run_id = RunRecorder.new_run_id(datetime.now(), "forest")
+    rec = RunRecorder(
+        run_id,
+        Path(record_dir),
+        frame_grabber=lambda: ag.pyboy.screen.image,
+        frame_interval=frame_interval,
+    )
+    rec.start({"label": label or "Viridian Forest crossing"})
+    return rec
+
+
 def follow_once(
     rom: str,
     in_state: str,
@@ -87,6 +109,9 @@ def follow_once(
     out_state: str | None = None,
     shot: str | None = None,
     route: str | None = None,
+    record_dir: str | None = None,
+    label: str | None = None,
+    frame_interval: int = 10,
 ) -> dict:
     """Run one genome-driven forest crossing. Returns ``{events, fitness, crossed, ...}``.
 
@@ -114,6 +139,13 @@ def follow_once(
 
     events: list[dict] = []
     step = {"n": 0}
+    rec = _start_recorder(ag, record_dir, label, frame_interval) if record_dir else None
+
+    def emit(evt: dict):
+        """Append a forest event; when recording, also feed the viewer run."""
+        events.append(evt)
+        if rec is not None:
+            rec.on_event(evt)
 
     def ow():
         s = ag.memory.read_overworld_state()
@@ -123,11 +155,11 @@ def follow_once(
 
     def note_map(map_id):
         if map_id != last_map["id"]:
-            events.append({"event_type": "overworld", "turn": step["n"],
-                           "data": {"map_id": map_id}})
+            emit({"event_type": "overworld", "turn": step["n"],
+                  "data": {"map_id": map_id}})
             if last_map["id"] is not None:
-                events.append({"event_type": "map_change", "turn": step["n"],
-                               "data": {"prev_map": last_map["id"], "new_map": map_id}})
+                emit({"event_type": "map_change", "turn": step["n"],
+                      "data": {"prev_map": last_map["id"], "new_map": map_id}})
             last_map["id"] = map_id
 
     def bt():
@@ -232,8 +264,8 @@ def follow_once(
         won = post_map == FOREST  # survived the encounter (didn't white out)
         if bt0 == 2 and won:
             trainers["won"] += 1
-        events.append({"event_type": "battle_outcome", "turn": step["n"],
-                       "data": {"battle_type": bt0, "won": won}})
+        emit({"event_type": "battle_outcome", "turn": step["n"],
+              "data": {"battle_type": bt0, "won": won}})
         return post_map
 
     def step_move(d):
@@ -260,6 +292,8 @@ def follow_once(
         blocked = 0
         while step["n"] < max_steps:
             step["n"] += 1
+            if rec is not None:
+                rec.tick(step["n"])
             if bt():
                 post_map = resolve_battle()
                 note_map(post_map)
@@ -285,8 +319,8 @@ def follow_once(
             if tb:
                 txt = ag.memory.read_dialogue()
                 if "TRAINER" in txt.upper() or "TIPS" in txt.upper():
-                    events.append({"event_type": "discovery", "turn": step["n"],
-                                   "data": {"text": txt, "kind": "sign"}})
+                    emit({"event_type": "discovery", "turn": step["n"],
+                          "data": {"text": txt, "kind": "sign"}})
                 ag.controller.mash_a(3, delay=15)
                 continue
             if not trace or trace[-1] != (x, y):
@@ -325,6 +359,8 @@ def follow_once(
         bag_at_beat = sum(q for _, q in ag.memory.read_bag_items())
         while step["n"] < max_steps:
             step["n"] += 1
+            if rec is not None:
+                rec.tick(step["n"])
             if bt():
                 post_map = resolve_battle()
                 note_map(post_map)
@@ -341,8 +377,8 @@ def follow_once(
                 txt = ag.memory.read_dialogue()
                 if "TRAINER" in txt.upper() or "TIPS" in txt.upper():
                     sign_seen = True
-                    events.append({"event_type": "discovery", "turn": step["n"],
-                                   "data": {"text": txt, "kind": "sign"}})
+                    emit({"event_type": "discovery", "turn": step["n"],
+                          "data": {"text": txt, "kind": "sign"}})
                 ag.controller.mash_a(3, delay=15)
                 continue
             if not trace or trace[-1] != (x, y):
@@ -382,6 +418,8 @@ def follow_once(
     dash_blocked = 0
     while route_tiles is None and not crossed and not stuck_in_battle and step["n"] < max_steps:
         step["n"] += 1
+        if rec is not None:
+            rec.tick(step["n"])
         if bt():
             post_map = resolve_battle()
             note_map(post_map)
@@ -452,6 +490,19 @@ def follow_once(
         "y_range": [min(ys), max(ys)],
         "reached_far_left": min(xs) <= 3,  # the exit pocket (warp at x=2) per forest-exit-wedge
     }
+    if rec is not None:
+        maps_visited = len(
+            {e["data"]["map_id"] for e in events if e["event_type"] == "overworld"}
+        )
+        rec.finish({
+            "turns": step["n"],
+            "battles_won": trainers["won"],
+            "maps_visited": maps_visited,
+            "badges": 0,
+            "reward": verdict.reward,
+            "crossed": crossed,
+            "furthest_beat_name": verdict.furthest_beat_name,
+        })
     ag.pyboy.stop()
     return {
         "events": events,
@@ -477,6 +528,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--route", default=None,
                         help=f"Tile-path JSON to follow (default: {ROUTE_DEFAULT} if present; "
                              "pass --route '' to force the legacy BEATS nav).")
+    parser.add_argument(
+        "--record",
+        default=None,
+        help="Runs-dir to write a viewer-format run (frames + events) for the Paper Traces viewer.",
+    )
+    parser.add_argument("--label", default=None, help="Run label shown in the viewer.")
+    parser.add_argument(
+        "--frame-interval", type=int, default=10, help="Capture a frame every N steps."
+    )
     args = parser.parse_args(argv)
 
     route = args.route
@@ -496,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
         worldmap_out=args.worldmap_out,
         out_state=args.out_state,
         route=route or None,
+        record_dir=args.record,
+        label=args.label,
+        frame_interval=args.frame_interval,
     )
     payload = {"genome": genome, **result}
     if args.out:

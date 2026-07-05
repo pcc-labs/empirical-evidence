@@ -12,8 +12,7 @@ walkthrough, each triggered by an OBSERVATION in telemetry, never a coordinate:
   5. pick up the Antidote         (bag count >= 2)
   6. read the Trainer Tips sign   (a discovery event whose text mentions TRAINER/TIPS)
   7. pick up the hidden Potion    (bag count >= 3)
-  8. exit to Route 2 / Pewter     (a later map id is visited AND all bug catchers are defeated —
-                                   you can't leave the forest without beating them)
+  8. exit to Route 2 / Pewter     (a later map id is visited)
 
 The reward is the count of sub-beats reached — a smooth ladder the nudge can climb even on runs
 that don't fully cross. Beats are counted whether or not earlier beats fired, so the
@@ -59,10 +58,50 @@ FOREST_BEATS: tuple[ForestBeat, ...] = (
     ForestBeat(8, "Exit to Route 2 / Pewter"),
 )
 
-# You cannot leave Viridian Forest without defeating its bug catchers — a precondition the
-# automated discovery engine never surfaced (it got the agent one tile from the exit and stalled).
-# Gate the exit beat on it, derived from the catcher beats above so adding a #3 keeps it in sync.
-REQUIRED_BUG_CATCHERS = sum(1 for b in FOREST_BEATS if "bug catcher" in b.name.lower())
+# NOTE: an earlier revision gated the exit beat on defeating REQUIRED_BUG_CATCHERS, on the
+# hypothesis that you cannot leave the forest without beating them. Ground truth falsified it:
+# the flood-fill-extracted canonical route (autotune/routes/forest_cross_path.json) crosses to
+# Route 2 triggering only ~1 catcher sight-line (verified 155-turn crossing, 2026-07-01). The
+# exit beat is a bare exit observation; beats 3-4 already reward the fights themselves.
+
+# --------------------------------------------------------------------------- #
+# Behavior domains (issue #10): each beat exercises exactly one domain.        #
+# --------------------------------------------------------------------------- #
+
+DOMAINS: tuple[str, ...] = ("nav", "battle", "discovery")
+
+# nav = map transitions (enter/exit), battle = the bug-catcher fights, discovery = items + sign.
+BEAT_DOMAINS: dict[int, str] = {
+    1: "nav",
+    2: "discovery",
+    3: "battle",
+    4: "battle",
+    5: "discovery",
+    6: "discovery",
+    7: "discovery",
+    8: "nav",
+}
+
+
+def domain_scores(verdict: ForestVerdict) -> dict[str, int]:
+    """Per-domain count of beats reached: nav 0..2, battle 0..2, discovery 0..4. Pure."""
+    scores = dict.fromkeys(DOMAINS, 0)
+    for beat, passed in zip(FOREST_BEATS, verdict.per_beat):
+        if passed:
+            scores[BEAT_DOMAINS[beat.beat_id]] += 1
+    return scores
+
+
+def pair_domains(source: ForestVerdict, target: ForestVerdict) -> tuple[str, ...]:
+    """Domains an improvement pair teaches: those where the target out-scored the source.
+
+    When no domain differs, the pair was ranked up by ``_forest_rank``'s survival tiebreaks
+    (trainer_wins, fewer turns) — battle-domain levers — so tag it ``("battle",)`` rather than
+    dropping it untagged.
+    """
+    src, tgt = domain_scores(source), domain_scores(target)
+    improved = tuple(d for d in DOMAINS if tgt[d] > src[d])
+    return improved or ("battle",)
 
 
 @dataclass(frozen=True)
@@ -125,7 +164,7 @@ def _beat_reached(beat_id: int, s: ForestSignals) -> bool:
         5: s.max_bag_count >= 2,
         6: s.sign_read,
         7: s.max_bag_count >= 3,
-        8: s.exited and s.trainer_wins >= REQUIRED_BUG_CATCHERS,
+        8: s.exited,
     }[beat_id]
 
 

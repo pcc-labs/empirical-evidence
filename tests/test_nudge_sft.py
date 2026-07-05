@@ -1,6 +1,6 @@
 import json
 
-from autotune.forest_story import ForestSignals, ForestVerdict
+from autotune.forest_story import ForestSignals, ForestVerdict, score_forest
 from autotune.genome import base_genome
 from autotune.nudge_sft import (
     ForestWinner,
@@ -12,6 +12,7 @@ from autotune.nudge_sft import (
     build_forest_pair_example,
     build_pair_example,
     split_train_valid,
+    write_corpus,
     write_sft_data,
 )
 from autotune.nudge_steer import parse_genome_response
@@ -39,6 +40,13 @@ def test_build_pair_example_target_is_flat_and_parseable(story):
     parsed = parse_genome_response(ex["messages"][-1]["content"])
     assert parsed is not None
     assert parsed["stuck_threshold"] == 5
+
+
+def test_map_pair_example_tagged_nav_by_default(story):
+    source = _winner(reward=5, score=10.0, stuck=3)
+    ex = build_pair_example(source, {**base_genome(), "stuck_threshold": 5}, story)
+    assert ex["domains"] == ["nav"]
+    assert set(ex) == {"messages", "domains"}
 
 
 def test_build_dataset_pairs_weaker_to_best(story):
@@ -137,7 +145,8 @@ def _forest_winner(*, reward, trainer_wins=0, turns=400, crossed=False, run_thr=
 
 def test_forest_pair_example_target_is_flat_and_parseable():
     src = _forest_winner(reward=2, run_thr=0.2)
-    ex = build_forest_pair_example(src, {**base_genome(), "hp_run_threshold": 0.45})
+    target = _forest_winner(reward=5, trainer_wins=2, crossed=True, run_thr=0.45)
+    ex = build_forest_pair_example(src, target)
     assert [m["role"] for m in ex["messages"]] == ["system", "user", "assistant"]
     parsed = parse_genome_response(ex["messages"][-1]["content"])
     assert parsed is not None and parsed["hp_run_threshold"] == 0.45
@@ -202,3 +211,55 @@ def test_assemble_forest_corpus_pairs_within_state():
     }
     examples = assemble_forest_corpus(by_state)
     assert len(examples) == 2  # one pair per state, concatenated
+
+
+# --- domain tagging (issue #10) -----------------------------------------------------------------
+
+
+def _fw(params, events, turns=500):
+    return ForestWinner(params=params, verdict=score_forest(events), fitness={"turns": turns})
+
+
+def _enter():
+    return {"event_type": "overworld", "turn": 0, "data": {"map_id": 51}}
+
+
+def _twin():
+    return {"event_type": "battle_outcome", "turn": 1, "data": {"battle_type": 2, "won": True}}
+
+
+def _exit():
+    return {"event_type": "overworld", "turn": 2, "data": {"map_id": 13}}
+
+
+def test_forest_pair_example_carries_pair_domains():
+    weak = _fw({"hp_run_threshold": 0.6}, [_enter()])
+    strong = _fw({"hp_run_threshold": 0.1}, [_enter(), _twin(), _exit()])
+    ex = build_forest_pair_example(weak, strong)
+    assert ex["domains"] == ["nav", "battle"]
+    assert set(ex) == {"messages", "domains"}
+
+
+def test_forest_dataset_examples_are_tagged():
+    weak = _fw({"hp_run_threshold": 0.6}, [_enter()])
+    strong = _fw({"hp_run_threshold": 0.1}, [_enter(), _twin(), _exit()])
+    examples = build_forest_dataset([weak, strong])
+    assert examples and all(isinstance(e["domains"], list) and e["domains"] for e in examples)
+
+
+def test_write_corpus_keeps_domains(tmp_path):
+    rows = [{"messages": [{"role": "user", "content": "x"}], "domains": ["battle"]}]
+    path = write_corpus(tmp_path / "corpus.jsonl", rows)
+    on_disk = [json.loads(ln) for ln in path.read_text().splitlines()]
+    assert on_disk == rows
+
+
+def test_write_sft_data_strips_domains(tmp_path):
+    rows = [
+        {"messages": [{"role": "user", "content": str(i)}], "domains": ["nav"]}
+        for i in range(5)
+    ]
+    train_path, valid_path = write_sft_data(tmp_path, rows)
+    for p in (train_path, valid_path):
+        for ln in p.read_text().splitlines():
+            assert set(json.loads(ln)) == {"messages"}

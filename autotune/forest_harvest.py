@@ -22,10 +22,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from autotune.config import load_config
-from autotune.forest_follow import follow_once
+from autotune.forest_follow import ROUTE_DEFAULT, follow_once
 from autotune.forest_story import score_forest
 from autotune.genome import base_genome
-from autotune.nudge_sft import ForestWinner, assemble_forest_corpus, write_sft_data
+from autotune.nudge_sft import ForestWinner, assemble_forest_corpus, write_corpus, write_sft_data
 
 
 def sweep_genomes(run_thresholds: list[float], heal_thresholds: list[float]) -> list[dict]:
@@ -46,6 +46,7 @@ def harvest(
     max_steps: int,
     worldmap_in: str | None,
     out_dir: Path,
+    route: str | None = None,
 ) -> dict:
     """Run each genome through the follower, score it, and write the forest SFT buffer.
 
@@ -60,7 +61,9 @@ def harvest(
     winners: list[ForestWinner] = []
     board: list[dict] = []
     for i, genome in enumerate(genomes):
-        result = follow_once(rom, in_state, genome, max_steps=max_steps, worldmap_in=worldmap_in)
+        result = follow_once(
+            rom, in_state, genome, max_steps=max_steps, worldmap_in=worldmap_in, route=route
+        )
         verdict = score_forest(result["events"])
         winners.append(ForestWinner(params=genome, verdict=verdict, fitness=result["fitness"]))
         row = {
@@ -85,6 +88,7 @@ def harvest(
         crossed_any = any(w.verdict.crossed for w in winners)
         return {"examples": 0, "rewards_seen": rewards, "crossed_any": crossed_any}
 
+    corpus_path = write_corpus(out_dir / "corpus.jsonl", examples)
     train_path, valid_path = write_sft_data(out_dir, examples)
     print(f"[harvest] {len(examples)} SFT pairs from {len(winners)} runs "
           f"(rewards seen: {rewards}) -> {train_path}")
@@ -92,6 +96,7 @@ def harvest(
         "examples": len(examples),
         "rewards_seen": rewards,
         "crossed_any": any(w.verdict.crossed for w in winners),
+        "corpus": str(corpus_path),
         "train": str(train_path),
         "valid": str(valid_path),
     }
@@ -106,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", default="out/forest_sft")
     parser.add_argument("--run-thresholds", default="0.1,0.2,0.3,0.45,0.6")
     parser.add_argument("--heal-thresholds", default="0.25")
+    parser.add_argument("--route", default=None,
+                        help=f"Tile-path JSON to follow (default: {ROUTE_DEFAULT} if present; "
+                             "pass --route '' to force the legacy BEATS nav).")
     args = parser.parse_args(argv)
 
     load_dotenv()
@@ -115,6 +123,10 @@ def main(argv: list[str] | None = None) -> int:
     genomes = sweep_genomes(run_thrs, heal_thrs)
     wm = args.worldmap_in if args.worldmap_in and Path(args.worldmap_in).exists() else None
 
+    route = args.route
+    if route is None and Path(ROUTE_DEFAULT).exists():
+        route = ROUTE_DEFAULT
+
     summary = harvest(
         cfg,
         in_state=str(Path(args.in_state).resolve()),
@@ -123,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=args.max_steps,
         worldmap_in=wm,
         out_dir=Path(args.out_dir),
+        route=route or None,
     )
     print(f"[harvest] summary: {json.dumps(summary)}")
     return 0
