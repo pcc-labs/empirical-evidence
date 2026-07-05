@@ -1,0 +1,3 @@
+{"schema":"pokemon.game.v1","event_type":"map_change","turn":50,"data":{"from_map":"Route 1","to_map":"Viridian City"}}
+{"schema":"pokemon.game.v1","event_type":"discovery","turn":60,"data":{"map_id":51,"position":{"x":17,"y":47},"kind":"dialogue","text":"Got away safely!"}}
+{"schema":"pokemon.game.v1","event_type":"battle_end","turn":70,"data":{"result":"won","enemy_species":"Weedle"}}

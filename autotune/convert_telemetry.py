@@ -219,3 +219,66 @@ def gen_genome(rollout_roots: list[Path]) -> list[dict]:
                 )
                 out.append(chat(GENOME_SYSTEM, user, json.dumps(genome, sort_keys=True), "genome"))
     return out
+
+
+NARRATOR_SYSTEM = (
+    "You are the live commentator for an autonomous Pokemon Red run. Reply with one short sentence."
+)
+
+NARRATOR_TEMPLATES: dict[str, list[str]] = {
+    "milestone": [
+        "Huge moment: {description}",
+        "The run just hit a milestone — {description}",
+        "Checkpoint reached: {description}",
+        "That's the milestone the chat was waiting for: {description}",
+        "Progress locked in: {description}",
+    ],
+    "map_change": [
+        "The agent crosses from {from_map} into {to_map}.",
+        "New area: leaving {from_map}, entering {to_map}.",
+        "Transition — {from_map} is behind us, {to_map} ahead.",
+        "The party steps out of {from_map} and into {to_map}.",
+        "Map change: {from_map} to {to_map}.",
+    ],
+    "discovery": [
+        "Found something: {text}",
+        "The agent uncovers a clue — {text}",
+        "On-screen text spotted: {text}",
+        "A discovery in the overworld: {text}",
+        "New info just dropped: {text}",
+    ],
+    "battle_end": [
+        "Battle over — the agent {result} against {enemy_species}.",
+        "That fight with {enemy_species} ends: {result}.",
+        "Result vs {enemy_species}: {result}.",
+        "The {enemy_species} encounter wraps up — {result}.",
+        "Dust settles on the {enemy_species} battle: {result}.",
+    ],
+}
+
+
+def gen_narrator(events: list[dict], rng: random.Random) -> list[dict]:
+    """Notable events -> one-sentence play-by-play from seeded template pools."""
+    out = []
+    for e in events:
+        etype = e.get("event_type")
+        if etype not in NARRATOR_TEMPLATES:
+            continue
+        d = dict(e.get("data", {}))
+        d.setdefault("description", "")
+        d.setdefault("from_map", "the last area")
+        d.setdefault("to_map", f"map {d.get('map_id', '?')}")
+        d.setdefault("text", d.get("kind", ""))
+        d.setdefault("result", "is decided")
+        d.setdefault("enemy_species", "the enemy")
+        template = rng.choice(NARRATOR_TEMPLATES[etype])
+        try:
+            sentence = template.format(**d)
+        except (KeyError, IndexError):
+            continue
+        user = (
+            "Narrate this game event for the stream overlay in one sentence:\n"
+            f"{json.dumps(e.get('data', {}), sort_keys=True)}"
+        )
+        out.append(chat(NARRATOR_SYSTEM, user, sentence, "narrator"))
+    return out

@@ -5,12 +5,14 @@ import random
 from pathlib import Path
 
 from autotune.convert_telemetry import (
+    NARRATOR_TEMPLATES,
     chat,
     damage_bucket,
     gen_battle_action,
     gen_battle_outcome,
     gen_genome,
     gen_move_choice,
+    gen_narrator,
     group_battles,
     load_events,
 )
@@ -33,6 +35,9 @@ def test_load_events_parses_and_counts_skipped():
         "battle_outcome",
         "move_result",
         "move_result",
+        "map_change",
+        "discovery",
+        "battle_end",
     ]
     files = [e["_file"] for e in events]
     assert files == [
@@ -46,6 +51,9 @@ def test_load_events_parses_and_counts_skipped():
         "actions",
         "moves",
         "moves",
+        "narrate",
+        "narrate",
+        "narrate",
     ]
 
 
@@ -118,3 +126,19 @@ def test_gen_genome_keeps_above_median():
     assert {a["stuck_threshold"] for a in answers} == {4, 6}
     assert all(e["domain"] == "genome" for e in examples)
     assert "scen-a" in examples[0]["messages"][1]["content"]
+
+
+def test_narrator_template_pools_are_deep():
+    for etype in ("milestone", "map_change", "discovery", "battle_end"):
+        assert len(NARRATOR_TEMPLATES[etype]) >= 5
+
+
+def test_gen_narrator_deterministic():
+    events, _ = load_events([FIXTURES])
+    a = gen_narrator(events, random.Random(42))
+    b = gen_narrator(events, random.Random(42))
+    assert a == b
+    # narrate.jsonl has 3 events + 2026-06-28.jsonl has 1 milestone = 4 examples
+    assert len(a) == 4
+    assert all(e["domain"] == "narrator" for e in a)
+    assert all(e["messages"][2]["content"].strip() for e in a)
