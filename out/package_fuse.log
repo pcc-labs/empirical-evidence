@@ -1,0 +1,8 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/326 [00:00<?, ?it/s]Loading weights: 100%|██████████| 326/326 [00:00<00:00, 32441.47it/s]
+Writing model shards:   0%|          | 0/1 [00:00<?, ?it/s]Writing model shards: 100%|██████████| 1/1 [00:00<00:00,  1.28it/s]Writing model shards: 100%|██████████| 1/1 [00:00<00:00,  1.28it/s]
+[package] wrote /home/bdougie/code/pcc-labs/empirical-evidence/out/package/fused + manifest.json
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/326 [00:00<?, ?it/s]Loading weights: 100%|██████████| 326/326 [00:00<00:00, 25784.33it/s]
+Writing model shards:   0%|          | 0/1 [00:00<?, ?it/s]Writing model shards: 100%|██████████| 1/1 [00:01<00:00,  1.87s/it]Writing model shards: 100%|██████████| 1/1 [00:01<00:00,  1.87s/it]
+[package] wrote /home/bdougie/code/pcc-labs/empirical-evidence/out/package/fused + manifest.json
