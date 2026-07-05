@@ -77,3 +77,60 @@ def gen_battle_outcome(events: list[dict]) -> list[dict]:
         answer = json.dumps({"win": d["won"], "recommendation": "fight" if d["won"] else "flee"})
         out.append(chat(BATTLE_SYSTEM, user, answer, "battle-outcome"))
     return out
+
+
+def damage_bucket(damage: int, enemy_max_hp: int, one_shot: bool) -> str:
+    """Bucket damage as a fraction of enemy max HP.
+
+    Buckets: none / <15% / 15-40% / >40% or one-shot.
+    """
+    if one_shot:
+        return "heavy"
+    if damage <= 0:
+        return "none"
+    frac = damage / max(enemy_max_hp, 1)
+    if frac < 0.15:
+        return "weak"
+    if frac <= 0.40:
+        return "solid"
+    return "heavy"
+
+
+def gen_move_choice(events: list[dict]) -> list[dict]:
+    """move_result rows -> per-row damage buckets + aggregated best-move picks."""
+    out = []
+    by_matchup: dict[tuple[str, str], dict[str, list[int]]] = {}
+    for e in events:
+        if e.get("event_type") != "move_result":
+            continue
+        d = e["data"]
+        bucket = damage_bucket(d["damage_dealt"], d["enemy_max_hp"], d.get("one_shot", False))
+        user = (
+            f"{d['user_species']} (lv {d['user_level']}) uses {d['move']} "
+            f"({d['move_type']}, power {d['move_power']}) against {d['enemy_species']} "
+            f"(lv {d['enemy_level']}, {d['enemy_type']} type) with "
+            f"{d['enemy_hp_before']}/{d['enemy_max_hp']} HP.\n"
+            "How much damage relative to the enemy's max HP? "
+            'Respond with JSON {"bucket": "none"|"weak"|"solid"|"heavy"}.'
+        )
+        out.append(chat(BATTLE_SYSTEM, user, json.dumps({"bucket": bucket}), "move-choice"))
+        key = (d["user_species"], d["enemy_type"])
+        by_matchup.setdefault(key, {}).setdefault(f"{d['move']} ({d['move_type']})", []).append(
+            d["damage_dealt"]
+        )
+    for (species, enemy_type), moves in sorted(by_matchup.items()):
+        if len(moves) < 2:
+            continue
+        means = {m: sum(v) / len(v) for m, v in moves.items()}
+        ranked = sorted(means.items(), key=lambda kv: -kv[1])
+        if ranked[0][1] == ranked[1][1]:
+            continue  # tie: no ground-truth winner
+        moves_desc = ", ".join(sorted(means))
+        best_name = ranked[0][0].split(" (")[0]
+        user = (
+            f"{species} is fighting a {enemy_type}-type enemy. "
+            f"Observed moves: {moves_desc}.\n"
+            'Which move deals the most damage? Respond with JSON {"move": "..."}.'
+        )
+        out.append(chat(BATTLE_SYSTEM, user, json.dumps({"move": best_name}), "move-choice"))
+    return out

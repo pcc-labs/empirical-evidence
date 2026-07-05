@@ -3,7 +3,13 @@
 import json
 from pathlib import Path
 
-from autotune.convert_telemetry import chat, gen_battle_outcome, load_events
+from autotune.convert_telemetry import (
+    chat,
+    damage_bucket,
+    gen_battle_outcome,
+    gen_move_choice,
+    load_events,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "convert"
 
@@ -12,8 +18,9 @@ def test_load_events_parses_and_counts_skipped():
     events, skipped = load_events([FIXTURES])
     assert skipped == 1
     types = [e["event_type"] for e in events]
-    assert types == ["battle_outcome", "move_result", "milestone"]
-    assert all(e["_file"] == "2026-06-28" for e in events)
+    assert types == ["battle_outcome", "move_result", "milestone", "move_result", "move_result"]
+    files = [e["_file"] for e in events]
+    assert files == ["2026-06-28", "2026-06-28", "2026-06-28", "moves", "moves"]
 
 
 def test_chat_shape():
@@ -37,3 +44,23 @@ def test_gen_battle_outcome():
         "win": True,
         "recommendation": "fight",
     }
+
+
+def test_damage_bucket_boundaries():
+    assert damage_bucket(0, 20, False) == "none"
+    assert damage_bucket(2, 20, False) == "weak"  # 10% < 15%
+    assert damage_bucket(6, 20, False) == "solid"  # 30%
+    assert damage_bucket(9, 20, False) == "heavy"  # 45% > 40%
+    assert damage_bucket(1, 20, True) == "heavy"  # one-shot always heavy
+
+
+def test_gen_move_choice_per_row_and_best_move():
+    events, _ = load_events([FIXTURES])
+    examples = gen_move_choice(events)
+    per_row = [e for e in examples if '"bucket"' in e["messages"][2]["content"]]
+    best = [e for e in examples if '"move"' in e["messages"][2]["content"]]
+    # 3 move_result rows total (1 in 2026-06-28.jsonl + 2 in moves.jsonl)
+    assert len(per_row) == 3
+    # exactly one matchup (Charmander vs bug) has >=2 distinct moves
+    assert len(best) == 1
+    assert json.loads(best[0]["messages"][2]["content"]) == {"move": "Ember"}
