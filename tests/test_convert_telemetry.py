@@ -6,8 +6,10 @@ from pathlib import Path
 
 from autotune.convert_telemetry import (
     NARRATOR_TEMPLATES,
+    balance,
     chat,
     damage_bucket,
+    dedupe,
     gen_battle_action,
     gen_battle_outcome,
     gen_genome,
@@ -15,6 +17,7 @@ from autotune.convert_telemetry import (
     gen_narrator,
     group_battles,
     load_events,
+    split,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "convert"
@@ -142,3 +145,62 @@ def test_gen_narrator_deterministic():
     assert len(a) == 4
     assert all(e["domain"] == "narrator" for e in a)
     assert all(e["messages"][2]["content"].strip() for e in a)
+
+
+def _mk(domain, n):
+    return [chat("s", f"u{domain}{i}", f"a{i}", domain) for i in range(n)]
+
+
+def test_dedupe_drops_exact_pairs():
+    ex = _mk("battle-outcome", 3) + _mk("battle-outcome", 3)
+    assert len(dedupe(ex)) == 3
+
+
+def test_balance_caps_dominant_domain():
+    ex = _mk("battle-action", 90) + _mk("narrator", 10)
+    balanced = balance(ex, random.Random(1), max_frac=0.4)
+    counts = {}
+    for e in balanced:
+        counts[e["domain"]] = counts.get(e["domain"], 0) + 1
+    assert counts["narrator"] == 10
+    total = sum(counts.values())
+    assert counts["battle-action"] <= 0.4 * total + 1
+
+
+def test_split_is_stratified_and_deterministic():
+    ex = _mk("genome", 20) + _mk("narrator", 20)
+    t1, v1 = split(ex, random.Random(7))
+    t2, v2 = split(ex, random.Random(7))
+    assert (t1, v1) == (t2, v2)
+    assert len(v1) == 4  # 10% of each domain
+    assert {e["domain"] for e in v1} == {"genome", "narrator"}
+
+
+def test_end_to_end_snapshot(tmp_path):
+    import subprocess
+    import sys
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "autotune.convert_telemetry",
+        "--pk-data",
+        str(FIXTURES / "game"),
+        "--rollouts",
+        str(FIXTURES / "rollouts"),
+        "--out",
+        str(tmp_path / "sft"),
+        "--seed",
+        "42",
+        "--min-total",
+        "5",
+    ]
+    r1 = subprocess.run(cmd, capture_output=True, text=True)
+    assert r1.returncode == 0, r1.stderr
+    h1 = json.loads((tmp_path / "sft" / "stats.json").read_text())["corpus_sha256"]
+    r2 = subprocess.run(cmd, capture_output=True, text=True)
+    h2 = json.loads((tmp_path / "sft" / "stats.json").read_text())["corpus_sha256"]
+    assert r1.returncode == r2.returncode == 0
+    assert h1 == h2
+    train = [json.loads(x) for x in (tmp_path / "sft" / "train.jsonl").read_text().splitlines()]
+    assert all("domain" not in row for row in train)
