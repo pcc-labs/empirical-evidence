@@ -9,6 +9,7 @@ from autotune.convert_telemetry import (
     damage_bucket,
     gen_battle_action,
     gen_battle_outcome,
+    gen_genome,
     gen_move_choice,
     group_battles,
     load_events,
@@ -107,3 +108,13 @@ def test_gen_battle_action_only_won_battles_and_cap():
     assert all(e["domain"] == "battle-action" for e in examples)
     assert json.loads(examples[0]["messages"][2]["content"])["action"] == "fight"
     assert gen_battle_action(events, random.Random(42), cap=1)[0] in examples
+
+
+def test_gen_genome_keeps_above_median():
+    examples = gen_genome([FIXTURES / "rollouts"])
+    # median battles_won = 3 -> rollout-0 (5) and rollout-2 (3) kept, rollout-1 (2) dropped
+    assert len(examples) == 2
+    answers = [json.loads(e["messages"][2]["content"]) for e in examples]
+    assert {a["stuck_threshold"] for a in answers} == {4, 6}
+    assert all(e["domain"] == "genome" for e in examples)
+    assert "scen-a" in examples[0]["messages"][1]["content"]

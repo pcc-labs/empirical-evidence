@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import random
+import statistics
 from pathlib import Path
 
 
@@ -179,4 +180,42 @@ def gen_battle_action(events: list[dict], rng: random.Random, cap: int = 800) ->
             out.append(chat(BATTLE_SYSTEM, user, json.dumps(action), "battle-action"))
     if len(out) > cap:
         out = rng.sample(out, cap)
+    return out
+
+
+GENOME_SYSTEM = "You tune a Pokemon Red agent's survival genome. Respond with only the genome JSON."
+
+
+def gen_genome(rollout_roots: list[Path]) -> list[dict]:
+    """Above-median rollout genomes per scenario -> fitness-summary -> genome examples."""
+    out = []
+    for root in rollout_roots:
+        if not root.exists():
+            print(f"[convert] warning: missing rollout root {root}")
+            continue
+        for scenario_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            rollouts = []
+            for rdir in sorted(scenario_dir.glob("rollout-*")):
+                gpath, fpath = rdir / "genome.json", rdir / "fitness.json"
+                if not (gpath.exists() and fpath.exists()):
+                    continue
+                genome = json.loads(gpath.read_text())
+                fitness = json.loads(fpath.read_text())
+                rollouts.append((genome, fitness))
+            if not rollouts:
+                continue
+            median_won = statistics.median(f.get("battles_won", 0) for _, f in rollouts)
+            for genome, fitness in rollouts:
+                if fitness.get("battles_won", 0) < median_won:
+                    continue
+                turns = fitness.get("turns", 0)
+                battles = fitness.get("battles_won", 0)
+                maps = fitness.get("maps_visited", 0)
+                user = (
+                    f"Scenario: {scenario_dir.name}. A rollout with this genome survived "
+                    f"{turns} turns, won {battles} battles, "
+                    f"and visited {maps} maps.\n"
+                    "Propose the genome JSON that achieved this."
+                )
+                out.append(chat(GENOME_SYSTEM, user, json.dumps(genome, sort_keys=True), "genome"))
     return out
