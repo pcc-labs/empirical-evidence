@@ -1,0 +1,4 @@
+{"schema":"pokemon.game.v1","event_type":"battle_outcome","turn":34,"data":{"user_species":"Charmander","user_level":6,"user_hp_start":21,"user_max_hp":21,"user_hp_end":15,"user_move_types":["normal","fire"],"had_healing":false,"enemy_species":"Weedle","enemy_level":3,"enemy_type":"bug","level_gap":3,"battle_type":1,"turns":7,"won":true}}
+{"schema":"pokemon.game.v1","event_type":"move_result","turn":31,"data":{"user_species":"Charmander","user_level":6,"move":"Ember","move_type":"fire","move_power":40,"enemy_species":"Weedle","enemy_level":3,"enemy_type":"bug","damage_dealt":6,"enemy_hp_before":16,"enemy_max_hp":16,"one_shot":false,"fainted":false}}
+{this line is not json
+{"schema":"pokemon.game.v1","event_type":"milestone","turn":240,"data":{"description":"Reached Viridian City!"}}

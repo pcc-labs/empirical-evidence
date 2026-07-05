@@ -208,3 +208,28 @@ reads is binary-flag-based rather than the turns/HP-based metric that actually v
 rows is too few for the LoRA to learn anything beyond memorizing its training genomes rather than a
 genome-conditioned policy. Artifacts: `docs/img/forest_benchmark_trends.png`,
 `docs/img/lora_weight_trends.png`.
+
+## Addendum (2026-07-05): the wall was task-specific — battle telemetry has real signal
+
+The conclusions above stand for the genome task: 11 memorized examples, flat benchmarks, low
+leverage. But branch `feat/telemetry-sft-corpus` (PR #12) tested the other half of the hypothesis:
+what if the corpus comes from the telemetry's *ground-truth* domains instead of only genome
+proposals?
+
+`autotune/convert_telemetry.py` converted ~38k `pokemon.game.v1` events into 590 deduplicated,
+seed-deterministic chat examples across five domains (battle-outcome, move-choice, battle-action,
+genome, narrator). The battle domains are labeled by game RAM — win/loss and observed damage —
+not by a saturating reward. Retraining the same SmolLM3-3B LoRA (3 epochs, final loss 0.069 vs
+the old 0.0031) and evaluating tuned-vs-base on held-out rows (`autotune/eval_heldout.py`):
+
+| Domain | Base | Tuned |
+|---|---|---|
+| battle-outcome (win prediction) | 0.00 | **1.00** |
+| move-choice (type effectiveness) | 0.00 | **0.56** |
+
+Small held-out set (~16 gated rows), so a smoke-level gate — but the first result in this repo
+where the tuned model demonstrably beats base on withheld data rather than reciting its training
+rows. The experimental-design lesson holds in reverse: the loop learns fine when the labels
+carry signal; the genome task's failure was the *task*, not the harness. Remaining follow-ups
+are logged in PR #12 (species-code resolution, corpus growth beyond 590, manifest regeneration
+before HF upload).

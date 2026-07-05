@@ -4,7 +4,8 @@
 > experience.* That is what this loop runs on: each generation runs the agent, observes its own
 > telemetry, and learns from what actually happened.
 
-A local **Try → Check → Reward → Nudge** training loop that runs entirely on Apple Silicon via
+A local **Try → Check → Reward → Nudge** training loop that runs on either an NVIDIA GPU
+(CUDA + TRL/PEFT, the default on this box) or Apple Silicon via
 [MLX](https://github.com/ml-explore/mlx-lm), and **enforces a story** in the
 [pokemon-kafka](../pokemon-kafka) agent.
 
@@ -63,6 +64,25 @@ uv run python -m autotune.train_sft --iters 50              # Nudge #1 (LoRA SFT
 uv run python -m autotune.generate --prompt-beat route1     # ask the trained model for a genome
 ```
 
+## Telemetry → SFT corpus → hostable weights (2026-07-05)
+
+Beyond the genome loop, `autotune/convert_telemetry.py` turns raw `pokemon.game.v1` telemetry
+(~38k events) into a deterministic multi-domain SFT corpus — battle-outcome, move-choice,
+battle-action, genome, narrator — at `data/sft_v3` (590 examples, seed 42, byte-reproducible).
+Retraining the SmolLM3-3B LoRA on it and gating with `autotune/eval_heldout.py` (tuned must beat
+base on the ground-truth domains) produced the first weights that show real learning rather than
+format memorization: tuned **1.00 / 0.56** vs base **0.00 / 0.00** on held-out win-prediction /
+type-effectiveness rows. The fused checkpoint + cards live under `out/package/fused/`
+(publish runbook: PR [#12](https://github.com/pcc-labs/empirical-evidence/pull/12)).
+
+```bash
+uv run python -m autotune.convert_telemetry \
+  --pk-data ../pokemon-kafka/data --ee-data data/telemetry --out data/sft_v3 --seed 42
+uv run python -m autotune.train_sft --data-dir data/sft_v3
+uv run python -m autotune.eval_heldout        # exit 0 = gate passed
+uv run python -m autotune.package --skip-eval --seed 42
+```
+
 ## Integration with pokemon-kafka
 
 The loop runs pokemon-kafka as its environment and feeds what it learns back into how the agent
@@ -70,8 +90,9 @@ plays, at three levels (apply the best genome, persist nudges into gameplay, evo
 local model). See [docs/pokemon-kafka-integration.md](docs/pokemon-kafka-integration.md) for the
 seams, the data contract, and the end-to-end workflow.
 
-For results from the constrained learning experiments (and why tuning the 12-parameter genome
-saturates on early-game tasks), see [docs/experiment-findings.md](docs/experiment-findings.md).
+For results from the constrained learning experiments (why tuning the 12-parameter genome
+saturates on early-game tasks — and the 2026-07-05 addendum on where the signal actually was),
+see [docs/experiment-findings.md](docs/experiment-findings.md).
 
 ## Layout
 | File | Role |

@@ -1,0 +1,15 @@
+{
+  "corpus_sha256": "a5f24e80202c6a0983fae7cdc07002205834009d93d1c2730a410659937ce936",
+  "domains": {
+    "battle-action": 144,
+    "battle-outcome": 72,
+    "genome": 41,
+    "move-choice": 97,
+    "narrator": 236
+  },
+  "seed": 42,
+  "skipped_lines": 0,
+  "total": 590,
+  "train": 533,
+  "valid": 57
+}
