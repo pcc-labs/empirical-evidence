@@ -35,7 +35,7 @@ set is small (57 rows, ~17 gated), so read these as a smoke-level gate, not a be
 
 ## Training data
 
-590 examples (533 train / 57 valid) generated deterministically (seed 42) from ~72k
+590 examples (533 train / 57 valid) generated deterministically (seed 42) from ~38k
 `pokemon.game.v1` telemetry events by `autotune/convert_telemetry.py`. Per-domain counts,
 corpus SHA-256, and the exact converter command are in the companion dataset repo's
 `stats.json`/README. The fused checkpoint's `manifest.json` records the base model, adapter

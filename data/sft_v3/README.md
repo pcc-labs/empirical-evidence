@@ -11,7 +11,7 @@ pretty_name: Pokemon Red Telemetry SFT (multi-domain)
 
 # Pokemon Red Telemetry SFT corpus (sft_v3)
 
-590 chat-format SFT examples generated deterministically (seed 42) from ~72k `pokemon.game.v1`
+590 chat-format SFT examples generated deterministically (seed 42) from ~38k `pokemon.game.v1`
 telemetry events emitted by an autonomous Pokemon Red agent
 ([pokemon-kafka](https://github.com/pcc-labs/pokemon-kafka)) and its training loop
 (empirical-evidence). Labels for the battle domains come from game RAM, not annotation.
@@ -51,5 +51,5 @@ Deterministic: same inputs + same seed → byte-identical corpus
   resolved name (e.g. `#71`); the model sees these as opaque identifiers.
 - Narrator labels are template-generated (5 seeded phrasings per event type) — stylistic, not
   human commentary.
-- Heavy dedup: the agent grinds repetitive early-game states, so 72k raw events collapse to 590
+- Heavy dedup: the agent grinds repetitive early-game states, so ~38k raw events collapse to 590
   unique examples.
