@@ -1,13 +1,16 @@
 """Tests for the telemetry -> SFT corpus converter."""
 
 import json
+import random
 from pathlib import Path
 
 from autotune.convert_telemetry import (
     chat,
     damage_bucket,
+    gen_battle_action,
     gen_battle_outcome,
     gen_move_choice,
+    group_battles,
     load_events,
 )
 
@@ -18,9 +21,31 @@ def test_load_events_parses_and_counts_skipped():
     events, skipped = load_events([FIXTURES])
     assert skipped == 1
     types = [e["event_type"] for e in events]
-    assert types == ["battle_outcome", "move_result", "milestone", "move_result", "move_result"]
+    assert types == [
+        "battle_outcome",
+        "move_result",
+        "milestone",
+        "battle",
+        "battle",
+        "battle_outcome",
+        "battle",
+        "battle_outcome",
+        "move_result",
+        "move_result",
+    ]
     files = [e["_file"] for e in events]
-    assert files == ["2026-06-28", "2026-06-28", "2026-06-28", "moves", "moves"]
+    assert files == [
+        "2026-06-28",
+        "2026-06-28",
+        "2026-06-28",
+        "actions",
+        "actions",
+        "actions",
+        "actions",
+        "actions",
+        "moves",
+        "moves",
+    ]
 
 
 def test_chat_shape():
@@ -34,7 +59,7 @@ def test_chat_shape():
 def test_gen_battle_outcome():
     events, _ = load_events([FIXTURES])
     examples = gen_battle_outcome(events)
-    assert len(examples) == 1
+    assert len(examples) == 3
     ex = examples[0]
     assert ex["domain"] == "battle-outcome"
     user = ex["messages"][1]["content"]
@@ -64,3 +89,21 @@ def test_gen_move_choice_per_row_and_best_move():
     # exactly one matchup (Charmander vs bug) has >=2 distinct moves
     assert len(best) == 1
     assert json.loads(best[0]["messages"][2]["content"]) == {"move": "Ember"}
+
+
+def test_group_battles_partitions_by_outcome():
+    events, _ = load_events([FIXTURES])
+    groups = group_battles(events)
+    won = [(turns, o) for turns, o in groups if o["won"]]
+    lost = [(turns, o) for turns, o in groups if not o["won"]]
+    assert len(won) == 1 and len(won[0][0]) == 2
+    assert len(lost) == 1 and len(lost[0][0]) == 1
+
+
+def test_gen_battle_action_only_won_battles_and_cap():
+    events, _ = load_events([FIXTURES])
+    examples = gen_battle_action(events, random.Random(42))
+    assert len(examples) == 2  # only the 2 turns of the won battle
+    assert all(e["domain"] == "battle-action" for e in examples)
+    assert json.loads(examples[0]["messages"][2]["content"])["action"] == "fight"
+    assert gen_battle_action(events, random.Random(42), cap=1)[0] in examples

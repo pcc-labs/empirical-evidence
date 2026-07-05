@@ -10,6 +10,7 @@ balance + stratified-split assembly. Pure Python; unit-tested; run via
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 
@@ -133,4 +134,49 @@ def gen_move_choice(events: list[dict]) -> list[dict]:
             'Which move deals the most damage? Respond with JSON {"move": "..."}.'
         )
         out.append(chat(BATTLE_SYSTEM, user, json.dumps({"move": best_name}), "move-choice"))
+    return out
+
+
+def group_battles(events: list[dict]) -> list[tuple[list[dict], dict]]:
+    """Per source file, attach each run of `battle` turns to the next `battle_outcome`."""
+    groups: list[tuple[list[dict], dict]] = []
+    by_file: dict[str, list[dict]] = {}
+    for e in events:
+        if e.get("event_type") in ("battle", "battle_outcome"):
+            by_file.setdefault(e["_file"], []).append(e)
+    for _file, evs in sorted(by_file.items()):
+        evs = sorted(evs, key=lambda e: e.get("turn", 0))
+        pending: list[dict] = []
+        for e in evs:
+            if e["event_type"] == "battle":
+                pending.append(e)
+            else:  # battle_outcome closes the current battle
+                if pending:
+                    groups.append((pending, e["data"]))
+                pending = []
+    return groups
+
+
+def gen_battle_action(events: list[dict], rng: random.Random, cap: int = 800) -> list[dict]:
+    """Turns of won battles -> state -> action examples (rejection sampling on outcome)."""
+    out = []
+    for turns, outcome in group_battles(events):
+        if not outcome.get("won"):
+            continue
+        for e in turns:
+            d = e["data"]
+            try:
+                action = json.loads(d["action"])
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
+            user = (
+                f"In battle: your Pokemon {d['player_species']} (lv {d['player_level']}) "
+                f"HP {d['player_hp']}/{d['player_max_hp']}; enemy {d['enemy_species']} "
+                f"(lv {d['enemy_level']}) HP {d['enemy_hp']}/{d['enemy_max_hp']}.\n"
+                "Choose the next action. Respond with the action JSON, e.g. "
+                '{"action": "fight", "move": "..."} or {"action": "run"}.'
+            )
+            out.append(chat(BATTLE_SYSTEM, user, json.dumps(action), "battle-action"))
+    if len(out) > cap:
+        out = rng.sample(out, cap)
     return out
