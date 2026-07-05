@@ -5,7 +5,7 @@ from pathlib import Path
 
 from autotune.convert_telemetry import chat, gen_battle_outcome, load_events
 
-FIXTURES = Path(__file__).parent / "fixtures" / "convert" / "game"
+FIXTURES = Path(__file__).parent / "fixtures" / "convert"
 
 
 def test_load_events_parses_and_counts_skipped():
