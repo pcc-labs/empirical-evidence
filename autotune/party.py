@@ -33,9 +33,11 @@ ADDR_PARTY_SPECIES_LIST = 0xD164  # 6 species bytes, mirror of struct offset 0
 OFF_SPECIES = 0x00
 OFF_CUR_HP = 0x01  # 2 bytes, big-endian
 OFF_BOX_LEVEL = 0x03
+OFF_MOVES = 0x08  # 4 move-id bytes
 OFF_EXP = 0x0E  # 3 bytes, big-endian — the AUTHORITATIVE experience total
 OFF_STATEXP = 0x11  # HP/Atk/Def/Spd/Spc, 2 bytes each: 0x11,0x13,0x15,0x17,0x19
 OFF_DV = 0x1B  # 2 bytes: byte0 = Atk(hi)/Def(lo), byte1 = Spd(hi)/Spc(lo)
+OFF_PP = 0x1D  # 4 PP bytes (one per move slot)
 OFF_LEVEL = 0x21  # the authoritative level byte
 OFF_MAX_HP = 0x22  # 2 bytes, big-endian
 OFF_ATK = 0x24
@@ -51,13 +53,20 @@ OFF_SPC = 0x2A
 GROWTH_MEDIUM_SLOW = "medium_slow"
 GROWTH_MEDIUM_FAST = "medium_fast"
 GROWTH_GROUP: dict[int, str] = {
-    0xB0: GROWTH_MEDIUM_SLOW, 0xB2: GROWTH_MEDIUM_SLOW,   # Charmander line
-    0xB1: GROWTH_MEDIUM_SLOW, 0xB3: GROWTH_MEDIUM_SLOW,   # Squirtle line
-    0x99: GROWTH_MEDIUM_SLOW, 0x09: GROWTH_MEDIUM_SLOW,   # Bulbasaur line (starters: medium-slow)
-    0x24: GROWTH_MEDIUM_FAST, 0x96: GROWTH_MEDIUM_FAST,   # Pidgey line
-    0xA5: GROWTH_MEDIUM_FAST, 0x54: GROWTH_MEDIUM_FAST,   # Rattata, Pikachu
-    0x7B: GROWTH_MEDIUM_FAST, 0x6D: GROWTH_MEDIUM_FAST,   # Caterpie, Metapod
-    0x70: GROWTH_MEDIUM_FAST, 0x6E: GROWTH_MEDIUM_FAST,   # Weedle, Kakuna
+    0xB0: GROWTH_MEDIUM_SLOW,
+    0xB2: GROWTH_MEDIUM_SLOW,  # Charmander line
+    0xB1: GROWTH_MEDIUM_SLOW,
+    0xB3: GROWTH_MEDIUM_SLOW,  # Squirtle line
+    0x99: GROWTH_MEDIUM_SLOW,
+    0x09: GROWTH_MEDIUM_SLOW,  # Bulbasaur line (starters: medium-slow)
+    0x24: GROWTH_MEDIUM_FAST,
+    0x96: GROWTH_MEDIUM_FAST,  # Pidgey line
+    0xA5: GROWTH_MEDIUM_FAST,
+    0x54: GROWTH_MEDIUM_FAST,  # Rattata, Pikachu
+    0x7B: GROWTH_MEDIUM_FAST,
+    0x6D: GROWTH_MEDIUM_FAST,  # Caterpie, Metapod
+    0x70: GROWTH_MEDIUM_FAST,
+    0x6E: GROWTH_MEDIUM_FAST,  # Weedle, Kakuna
 }
 
 
@@ -65,35 +74,86 @@ def exp_for_level(group: str, level: int) -> int:
     """Minimum EXP total to BE at ``level`` for a growth ``group`` (Gen-1 formulas). Pure."""
     n = level
     if group == GROWTH_MEDIUM_FAST:
-        return n ** 3
+        return n**3
     if group == GROWTH_MEDIUM_SLOW:
-        return max(0, int(1.2 * n ** 3 - 15 * n ** 2 + 100 * n - 140))
+        return max(0, int(1.2 * n**3 - 15 * n**2 + 100 * n - 140))
     raise KeyError(f"unknown growth group: {group}")
 
 
 # Curated Gen-1 base stats (HP, Atk, Def, Speed, Special), keyed by the internal species IDs in
 # pokemon-kafka's SPECIES_ID_MAP. pokemon-kafka ships no base-stats dex, so this is the source.
 BASE_STATS: dict[int, tuple[int, int, int, int, int]] = {
-    0xB0: (39, 52, 43, 65, 50),   # Charmander (the agent's hardcoded starter)
-    0xB2: (58, 64, 58, 80, 65),   # Charmeleon
-    0xB1: (44, 48, 65, 43, 50),   # Squirtle  (Water — super-effective vs Brock)
-    0xB3: (59, 63, 80, 58, 65),   # Wartortle
-    0x99: (45, 49, 49, 45, 65),   # Bulbasaur (Grass — super-effective vs Brock)
-    0x09: (60, 62, 63, 60, 80),   # Ivysaur
-    0x24: (40, 45, 40, 56, 35),   # Pidgey
-    0x96: (63, 60, 55, 71, 50),   # Pidgeotto
-    0xA5: (30, 56, 35, 72, 25),   # Rattata
-    0x54: (35, 55, 30, 90, 50),   # Pikachu
-    0x7B: (45, 30, 35, 45, 20),   # Caterpie
-    0x6D: (50, 20, 55, 30, 25),   # Metapod
-    0x70: (40, 35, 30, 50, 20),   # Weedle
-    0x6E: (45, 25, 50, 35, 25),   # Kakuna
+    0xB0: (39, 52, 43, 65, 50),  # Charmander (the agent's hardcoded starter)
+    0xB2: (58, 64, 58, 80, 65),  # Charmeleon
+    0xB1: (44, 48, 65, 43, 50),  # Squirtle  (Water — super-effective vs Brock)
+    0xB3: (59, 63, 80, 58, 65),  # Wartortle
+    0x99: (45, 49, 49, 45, 65),  # Bulbasaur (Grass — super-effective vs Brock)
+    0x09: (60, 62, 63, 60, 80),  # Ivysaur
+    0x24: (40, 45, 40, 56, 35),  # Pidgey
+    0x96: (63, 60, 55, 71, 50),  # Pidgeotto
+    0xA5: (30, 56, 35, 72, 25),  # Rattata
+    0x54: (35, 55, 30, 90, 50),  # Pikachu
+    0x7B: (45, 30, 35, 45, 20),  # Caterpie
+    0x6D: (50, 20, 55, 30, 25),  # Metapod
+    0x70: (40, 35, 30, 50, 20),  # Weedle
+    0x6E: (45, 25, 50, 35, 25),  # Kakuna
+}
+
+
+# Gen-1 move id -> base PP, for the moves in LEARNSETS below.
+MOVE_PP: dict[int, int] = {
+    0x0A: 35,  # Scratch
+    0x2D: 40,  # Growl
+    0x34: 25,  # Ember
+    0x2B: 30,  # Leer
+    0x63: 20,  # Rage
+    0xA3: 20,  # Slash
+    0x35: 25,  # Flamethrower
+    0x53: 15,  # Fire Spin
+}
+
+# Gen-1 level-up learnsets (level, move_id), ascending by level. Poking a level WITHOUT the
+# matching moves leaves a leveled lead stuck on its capture-time moveset — the reason a poked
+# "L30" Charmander kept only Scratch/Growl (no Ember) and could not beat Brock. Only the
+# Charmander line is needed: pokemon-kafka hardcodes Charmander, so the pre-Brock lead is this line.
+LEARNSETS: dict[int, list[tuple[int, int]]] = {
+    0xB0: [  # Charmander
+        (1, 0x0A),
+        (1, 0x2D),
+        (9, 0x34),
+        (15, 0x2B),
+        (22, 0x63),
+        (30, 0xA3),
+        (38, 0x35),
+        (46, 0x53),
+    ],
+    0xB2: [  # Charmeleon (evolves at 16)
+        (1, 0x0A),
+        (1, 0x2D),
+        (9, 0x34),
+        (15, 0x2B),
+        (24, 0x63),
+        (33, 0xA3),
+        (42, 0x35),
+        (56, 0x53),
+    ],
 }
 
 
 # ---------------------------------------------------------------------------
 # Pure formula layer (no emulator; unit-tested)
 # ---------------------------------------------------------------------------
+
+
+def moveset_for_level(species: int, level: int) -> list[tuple[int, int]] | None:
+    """The (move_id, pp) list a species knows at ``level`` — the 4 most recently learned level-up
+    moves (Gen-1 keeps the newest 4, oldest pushed out). ``None`` if the species has no learnset
+    here (leave its moves untouched). Pure."""
+    learnset = LEARNSETS.get(species)
+    if learnset is None:
+        return None
+    known = [(mid, MOVE_PP[mid]) for lv, mid in learnset if lv <= level]
+    return known[-4:]
 
 
 def stat_exp_term(stat_exp: int) -> int:
@@ -196,8 +256,13 @@ def read_lead(pyboy, slot: int = 0) -> LeadMon:
     )
 
 
-def set_lead_level(pyboy, level: int, slot: int = 0, full_heal: bool = True) -> dict:
-    """Set the lead's level and recompute/write HP + the four stats. Returns the read-back."""
+def set_lead_level(
+    pyboy, level: int, slot: int = 0, full_heal: bool = True, grant_moves: bool = True
+) -> dict:
+    """Set the lead's level and recompute/write HP + the four stats. With ``grant_moves`` (default),
+    also grant the level-appropriate moveset (so a poked lead isn't stuck on its capture-time
+    moves — e.g. a leveled Charmander gets Ember, which it needs to beat Brock). Returns the
+    read-back."""
     mon = read_lead(pyboy, slot)
     if mon.species not in BASE_STATS:
         raise KeyError(
@@ -221,6 +286,13 @@ def set_lead_level(pyboy, level: int, slot: int = 0, full_heal: bool = True) -> 
     _w16(pyboy, b + OFF_SPC, stats["spc"])
     cur = stats["max_hp"] if full_heal else min(_r16(pyboy, b + OFF_CUR_HP), stats["max_hp"])
     _w16(pyboy, b + OFF_CUR_HP, cur)
+    if grant_moves:
+        moves = moveset_for_level(mon.species, level)
+        if moves is not None:  # only species with a known learnset; else leave moves untouched
+            for i in range(4):
+                mid, pp = moves[i] if i < len(moves) else (0, 0)
+                pyboy.memory[b + OFF_MOVES + i] = mid
+                pyboy.memory[b + OFF_PP + i] = pp
     return verify_lead(pyboy, level, slot)
 
 
