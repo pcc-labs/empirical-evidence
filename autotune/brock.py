@@ -129,9 +129,14 @@ def extract_brock_fitness(
         or fitness.get("final_map_id") == PEWTER_MAP_ID
     )
 
+    # A Brock win is the Boulder Badge — the one thing you cannot obtain without defeating Brock.
+    # The agent's ``brock_won`` already reads that badge bit, so prefer it. When the fight didn't
+    # cleanly resolve as the Brock battle (``brock_won`` is None), fall back to the badge bit in
+    # the final fitness — NOT to ``battle_end.won``, which pokemon-kafka sets to "did not white
+    # out" and is therefore True for a flee, a stall, or a max-turns timeout (a false-positive win).
     won = fitness.get("brock_won")
-    if won is None and brock_end is not None:
-        won = brock_end.get("data", {}).get("won")
+    if won is None:
+        won = bool(fitness.get("badges", 0) & 0x01)
     won = bool(won)
 
     turns = fitness.get("brock_turns")
@@ -140,9 +145,7 @@ def extract_brock_fitness(
 
     # nav_progress reuses the verifier's directional in-order frontier (NOT maps_visited).
     nav = verify(story, fitness, events)
-    nav_progress = (
-        nav.beats_passed / story.target_beat_id if story.target_beat_id else 0.0
-    )
+    nav_progress = nav.beats_passed / story.target_beat_id if story.target_beat_id else 0.0
 
     damage_frac = 1.0 if won else _brock_damage_frac(events, brock_end)
     whiteout = _brock_whiteout(brock_end, won)
@@ -191,9 +194,7 @@ def brock_fitness_reward(fitness: dict) -> float:
         turns = fitness.get("brock_turns") or BROCK_MAX_TURNS
         t = _clamp(float(turns), 1.0, BROCK_MAX_TURNS)
         return W_REACH + W_WIN + (BROCK_MAX_TURNS - t) / BROCK_MAX_TURNS
-    reached = (
-        fitness.get("brock_turns") is not None or fitness.get("final_map_id") == PEWTER_MAP_ID
-    )
+    reached = fitness.get("brock_turns") is not None or fitness.get("final_map_id") == PEWTER_MAP_ID
     return W_REACH if reached else 0.0
 
 

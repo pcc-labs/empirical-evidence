@@ -62,16 +62,21 @@ def battle_end(
 
 def _m(**kw) -> dict:
     base = dict(
-        reached_pewter=False, won=False, turns=None,
-        damage_frac=0.0, whiteout=False, nav_progress=0.0,
-        lead_species=None, lead_level=None,
+        reached_pewter=False,
+        won=False,
+        turns=None,
+        damage_frac=0.0,
+        whiteout=False,
+        nav_progress=0.0,
+        lead_species=None,
+        lead_level=None,
     )
     base.update(kw)
     return base
 
 
 def test_bands_are_strictly_ordered():
-    not_reached = brock_reward(_m(reached_pewter=False, nav_progress=1.0))   # band max 0.9
+    not_reached = brock_reward(_m(reached_pewter=False, nav_progress=1.0))  # band max 0.9
     lost = brock_reward(_m(reached_pewter=True, won=False, damage_frac=1.0))  # band max 3.0
     won_slow = brock_reward(_m(reached_pewter=True, won=True, turns=BROCK_MAX_TURNS))
     won_fast = brock_reward(_m(reached_pewter=True, won=True, turns=1))
@@ -111,8 +116,13 @@ def test_won_turns_are_clamped():
 def test_extract_prefers_fitness_brock_fields():
     story = pewter_story()
     events = [overworld(2, 1), battle_end(20, won=True, battle_turns=9)]
-    fitness = {"brock_won": True, "brock_turns": 9, "final_map_id": 2,
-               "brock_lead_species": "Squirtle", "brock_lead_level": 14}
+    fitness = {
+        "brock_won": True,
+        "brock_turns": 9,
+        "final_map_id": 2,
+        "brock_lead_species": "Squirtle",
+        "brock_lead_level": 14,
+    }
     m = extract_brock_fitness(events, fitness, story)
     assert m["reached_pewter"] is True
     assert m["won"] is True
@@ -121,24 +131,49 @@ def test_extract_prefers_fitness_brock_fields():
     assert m["lead_species"] == "Squirtle"
 
 
-def test_extract_falls_back_to_battle_end_when_fitness_missing():
+def test_extract_recovers_turns_from_battle_end_when_fitness_missing():
     story = pewter_story()
     events = [overworld(2, 1), battle_end(20, won=False, battle_turns=14)]
     m = extract_brock_fitness(events, {}, story)
     assert m["won"] is False
-    assert m["turns"] == 14
+    assert m["turns"] == 14  # turns still come from the battle_end event
+
+
+def test_spurious_battle_end_win_without_badge_is_not_a_win():
+    """Regression: pokemon-kafka sets ``battle_end.won = not whited_out``, so a flee / stall /
+    max-turns timeout emits ``won:true`` without defeating Brock. The Boulder Badge is the only
+    real Brock-win signal — without it this must NOT count as a win (was the false-positive bug)."""
+    story = pewter_story()
+    events = [overworld(54, 1), battle_end(20, won=True, battle_turns=12)]  # spurious won=True
+    fitness = {"brock_won": None, "battles_won": 0, "badges": 0, "final_map_id": 54}
+    m = extract_brock_fitness(events, fitness, story)
+    assert m["won"] is False  # no badge -> not a win, despite battle_end.won=True
+    assert brock_reward(m) < 11.0  # stays in the lost band, out of the [11,12) won band
+
+
+def test_boulder_badge_counts_as_brock_win_when_brock_won_missing():
+    story = pewter_story()
+    events = [overworld(54, 1), battle_end(20, won=True, battle_turns=12)]
+    fitness = {"brock_won": None, "badges": 0x01, "final_map_id": 54}  # Boulder Badge earned
+    m = extract_brock_fitness(events, fitness, story)
+    assert m["won"] is True
+    assert brock_reward(m) >= 11.0
 
 
 def test_extract_damage_frac_from_two_mon_fight():
     """Geodude fully fainted, Onix chipped to ~50% before a loss -> ~0.75 damage."""
     story = pewter_story()
     events = [
-        battle(11, enemy_hp=26, enemy_max_hp=26),   # Geodude full
-        battle(12, enemy_hp=0, enemy_max_hp=26),    # Geodude fainted
-        battle(13, enemy_hp=30, enemy_max_hp=30),   # Onix sent out
-        battle(14, enemy_hp=15, enemy_max_hp=30),   # Onix to 50%
-        battle_end(15, won=False, battle_turns=4,
-                   party=[{"species": "Squirtle", "level": 12, "hp": 0, "max_hp": 30}]),
+        battle(11, enemy_hp=26, enemy_max_hp=26),  # Geodude full
+        battle(12, enemy_hp=0, enemy_max_hp=26),  # Geodude fainted
+        battle(13, enemy_hp=30, enemy_max_hp=30),  # Onix sent out
+        battle(14, enemy_hp=15, enemy_max_hp=30),  # Onix to 50%
+        battle_end(
+            15,
+            won=False,
+            battle_turns=4,
+            party=[{"species": "Squirtle", "level": 12, "hp": 0, "max_hp": 30}],
+        ),
     ]
     m = extract_brock_fitness(events, {}, story)
     assert m["won"] is False
