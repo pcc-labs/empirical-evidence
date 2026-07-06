@@ -16,9 +16,38 @@ from autotune.party import (
     calc_stat,
     exp_for_level,
     hp_dv,
+    moveset_for_level,
     recompute,
     stat_exp_term,
 )
+
+# --- level-up moveset granting ---
+
+
+def test_moveset_charmander_l30_has_ember_and_recent_moves():
+    # The 4 most recently learned by L30: Ember(9), Leer(15), Rage(22), Slash(30). Ember is the
+    # move a poked-level Charmander needs to beat Brock — without this it kept only Scratch/Growl.
+    ms = moveset_for_level(0xB0, 30)
+    assert ms == [(0x34, 25), (0x2B, 30), (0x63, 20), (0xA3, 20)]
+    assert 0x34 in [mid for mid, _ in ms]  # Ember present
+
+
+def test_moveset_charmander_l9_is_scratch_growl_ember():
+    assert moveset_for_level(0xB0, 9) == [(0x0A, 35), (0x2D, 40), (0x34, 25)]
+
+
+def test_moveset_charmander_l1_has_no_ember():
+    ms = moveset_for_level(0xB0, 1)
+    assert ms == [(0x0A, 35), (0x2D, 40)]
+    assert 0x34 not in [mid for mid, _ in ms]
+
+
+def test_moveset_keeps_only_four_most_recent():
+    assert len(moveset_for_level(0xB2, 60)) == 4
+
+
+def test_moveset_none_for_species_without_learnset():
+    assert moveset_for_level(0x24, 5) is None  # Pidgey: leave its moves untouched
 
 
 def test_exp_for_level_medium_slow_l13():
@@ -28,7 +57,7 @@ def test_exp_for_level_medium_slow_l13():
 
 
 def test_exp_for_level_medium_fast_is_cube():
-    assert exp_for_level(GROWTH_MEDIUM_FAST, 13) == 13 ** 3
+    assert exp_for_level(GROWTH_MEDIUM_FAST, 13) == 13**3
     assert exp_for_level(GROWTH_MEDIUM_FAST, 10) == 1000
 
 
@@ -65,15 +94,23 @@ def test_l100_hp_closed_form():
 
 def test_low_level_hand_computed():
     # Zero DV/stat-exp at the levels we actually target vs Brock.
-    assert calc_hp(44, 0, 0, 12) == 32   # Squirtle base HP 44
+    assert calc_hp(44, 0, 0, 12) == 32  # Squirtle base HP 44
     assert calc_stat(65, 0, 0, 12) == 20  # Squirtle base Def 65
 
 
 def test_recompute_squirtle_l12():
     mon = LeadMon(
-        species=0xB1, level=5,
-        dv_atk=8, dv_def=8, dv_spd=8, dv_spc=8,
-        exp_hp=0, exp_atk=0, exp_def=0, exp_spd=0, exp_spc=0,
+        species=0xB1,
+        level=5,
+        dv_atk=8,
+        dv_def=8,
+        dv_spd=8,
+        dv_spc=8,
+        exp_hp=0,
+        exp_atk=0,
+        exp_def=0,
+        exp_spd=0,
+        exp_spc=0,
     )
     stats = recompute(mon, BASE_STATS[0xB1], 12)
     assert stats == {"max_hp": 32, "atk": 18, "def": 22, "spd": 17, "spc": 18}
@@ -81,9 +118,17 @@ def test_recompute_squirtle_l12():
 
 def test_recompute_scales_with_level():
     mon = LeadMon(
-        species=0xB0, level=5,
-        dv_atk=9, dv_def=8, dv_spd=10, dv_spc=11,
-        exp_hp=100, exp_atk=0, exp_def=0, exp_spd=0, exp_spc=0,
+        species=0xB0,
+        level=5,
+        dv_atk=9,
+        dv_def=8,
+        dv_spd=10,
+        dv_spc=11,
+        exp_hp=100,
+        exp_atk=0,
+        exp_def=0,
+        exp_spd=0,
+        exp_spc=0,
     )
     low = recompute(mon, BASE_STATS[0xB0], 10)
     high = recompute(mon, BASE_STATS[0xB0], 16)
