@@ -9,6 +9,13 @@ A local **Try → Check → Reward → Nudge** training loop that runs on either
 [MLX](https://github.com/ml-explore/mlx-lm), and **enforces a story** in the
 [pokemon-kafka](../pokemon-kafka) agent.
 
+> [!NOTE]
+> **This repo is published as reference.** The loop drives a companion agent, **`pokemon-kafka`**,
+> which is a separate repository that is **not yet public**. Without it (and a legally-obtained
+> Pokémon Red ROM, which is never included here) the loop can't be run end-to-end — but the
+> training loop, verifier, story spec, and SFT pipeline are all here to read and reuse. `../pokemon-kafka`
+> links point at that sibling repo; they resolve only in a local checkout that has both.
+
 ```
         ┌──────────── empirical-evidence loop ───────────┐
  story  │  Try            Check + Reward         Nudge   │
