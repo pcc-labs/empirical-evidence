@@ -45,6 +45,7 @@ def build_lora_config(
 ) -> dict:
     """Assemble an mlx_lm.lora config dict from the Mac profile + model config."""
     profile = cfg.profile
+    resolved_iters = iters if iters is not None else profile.iters
     config = {
         "model": cfg.model.base_model,
         "train": True,
@@ -52,13 +53,21 @@ def build_lora_config(
         "fine_tune_type": "lora",
         "num_layers": profile.num_layers,
         "batch_size": profile.batch_size,
-        "iters": iters if iters is not None else profile.iters,
+        "iters": resolved_iters,
         "learning_rate": profile.learning_rate,
         "steps_per_report": 10,
-        "steps_per_eval": max(10, (iters or profile.iters) // 4),
+        "steps_per_eval": max(10, resolved_iters // 4),
         "adapter_path": str(Path(adapter_dir).resolve()),
         "max_seq_length": profile.max_seq_length,
         "grad_checkpoint": profile.grad_checkpoint,
+        # Warmup + cosine decay. mlx_lm.lora treats ``learning_rate`` as a constant
+        # without this, and the constant peak LR diverges (see MacProfile.warmup_steps).
+        "lr_schedule": {
+            "name": "cosine_decay",
+            "warmup": profile.warmup_steps,
+            "warmup_init": 1e-7,
+            "arguments": [profile.learning_rate, resolved_iters, profile.lr_min],
+        },
         "lora_parameters": {
             "rank": profile.lora_rank,
             "scale": profile.lora_scale,

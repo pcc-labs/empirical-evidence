@@ -195,6 +195,13 @@ class MacProfile:
     lora_rank: int = 16
     lora_scale: float = 16.0
     lora_dropout: float = 0.05
+    # LR schedule (warmup then cosine decay). Unlike the CUDA/TRL path, mlx_lm.lora
+    # applies ``learning_rate`` as a CONSTANT unless a schedule is given — and 2e-4
+    # constant DIVERGES on this corpus (val loss climbs 3.6→6.0). Warmup + cosine decay
+    # to ``lr_min`` is what makes the MLX run converge (val loss 3.6→0.3), matching the
+    # CUDA cosine recipe that produced sft_v3.
+    warmup_steps: int = 60
+    lr_min: float = 1e-6
     # Data-prep budget (token ceiling per SFT example)
     max_tokens: int = 4096
 
