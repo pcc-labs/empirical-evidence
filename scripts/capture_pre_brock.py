@@ -8,6 +8,8 @@ Capture pre_brock.state at Brock's battle start (enemy_level>=12)."""
 import os, json
 os.environ["EVOLVE_PARAMS"]=json.dumps({"hp_run_threshold":0.35,"hp_heal_threshold":0.4,"unknown_move_score":10.0,"status_move_score":0.0})
 from autotune.forest_follow import _import_pk
+from autotune.game_profile import detect_profile
+from autotune.party import OFF_CUR_HP, OFF_MAX_HP
 PokemonAgent,WorldMap=_import_pk()
 ROM=os.environ.get("ROM_PATH") or "../pokemon-kafka/rom/Pokemon - Red Version (USA, Europe) (SGB Enhanced).gb"
 STATES="autotune/states"
@@ -22,7 +24,8 @@ if LEVEL>0:
     set_lead_level(ag.pyboy, LEVEL)          # poke level + recompute stats + full heal
     set_bag(ag.pyboy, [(0x14, 40)])          # 40 Potions so the agent can heal through Brock
     print(f"poked lead -> L{LEVEL} + 40 potions")
-mx=ag.pyboy.memory[0xD18D]*256+ag.pyboy.memory[0xD18E]; ag.pyboy.memory[0xD16C]=mx>>8; ag.pyboy.memory[0xD16D]=mx&0xFF
+prof=detect_profile(ag.pyboy); LEAD=prof.party_base
+mx=ag.pyboy.memory[LEAD+OFF_MAX_HP]*256+ag.pyboy.memory[LEAD+OFF_MAX_HP+1]; ag.pyboy.memory[LEAD+OFF_CUR_HP]=mx>>8; ag.pyboy.memory[LEAD+OFF_CUR_HP+1]=mx&0xFF
 def s(): return ag.memory.read_overworld_state()
 def pos(): st=s(); return st.map_id,st.x,st.y
 def bt(): return ag.memory.read_battle_state()
@@ -37,9 +40,9 @@ def walkable(d):
 def heal_full():
     # keep the lead alive through the Camper attrition (traversal aid only — the captured
     # pre_brock state is still an honest full-HP L13 battle start): top up party + battle HP.
-    ag.pyboy.memory[0xD16C]=mx>>8; ag.pyboy.memory[0xD16D]=mx&0xFF
-    bm=ag.pyboy.memory[0xD023]*256+ag.pyboy.memory[0xD024]
-    if bm>0: ag.pyboy.memory[0xD015]=bm>>8; ag.pyboy.memory[0xD016]=bm&0xFF
+    ag.pyboy.memory[LEAD+OFF_CUR_HP]=mx>>8; ag.pyboy.memory[LEAD+OFF_CUR_HP+1]=mx&0xFF
+    bm=ag.pyboy.memory[prof.addr_battle_max_hp_hi]*256+ag.pyboy.memory[prof.addr_battle_max_hp_hi+1]
+    if bm>0: ag.pyboy.memory[prof.addr_battle_hp_hi]=bm>>8; ag.pyboy.memory[prof.addr_battle_hp_hi+1]=bm&0xFF
 
 captured=False; prev=None; nomove=0
 for n in range(4000):

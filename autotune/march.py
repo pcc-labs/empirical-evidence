@@ -55,7 +55,7 @@ def run_march(
 ) -> dict:
     """Run segments until ``target_map`` is reached, persisting observations + a checkpoint."""
     if cfg.env.rom_path is None:
-        raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM to run.")
+        raise RuntimeError("ROM_PATH is not set — point it at a Gen-1 ROM (Red/Blue/Yellow).")
 
     work_root = cfg.storage.out_dir / "march"
     wm_file = work_root / "worldmap.json"

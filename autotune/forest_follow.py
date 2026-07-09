@@ -474,6 +474,8 @@ def follow_once(
             img.resize((img.width * 3, img.height * 3)).save(shot)
 
     from autotune.forest_story import score_forest
+    from autotune.game_profile import detect_profile
+    from autotune.party import OFF_LEVEL
 
     verdict = score_forest(events)
     xs = [p[0] for p in trace] or [x]
@@ -481,7 +483,7 @@ def follow_once(
     fitness = {
         "turns": step["n"],
         "trainer_wins": trainers["won"],
-        "lead_level": int(ag.pyboy.memory[0xD18C]),
+        "lead_level": int(ag.pyboy.memory[detect_profile(ag.pyboy).party_base + OFF_LEVEL]),
         "final_map_id": m,
         "crossed": crossed,
         "stuck_in_battle": stuck_in_battle,

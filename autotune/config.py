@@ -306,6 +306,25 @@ def resolve_ollama() -> OllamaConfig:
     )
 
 
+# Which game the loop is tuning against, for prompt labels. "red" is the legacy
+# default — existing adapters (forest-lora, sft_v3) were trained on "Pokemon Red"
+# prompts, so an unset env must not silently shift the prompt distribution.
+GAME_LABELS = {"red": "Red", "red_blue": "Red/Blue", "yellow": "Yellow"}
+
+
+def resolve_game() -> str:
+    """``AUTOTUNE_GAME`` env (``red_blue`` | ``yellow``); default legacy ``red``."""
+    value = os.environ.get("AUTOTUNE_GAME", "red")
+    if value not in GAME_LABELS:
+        raise ValueError(f"Unknown AUTOTUNE_GAME={value!r}; choose from {sorted(GAME_LABELS)}")
+    return value
+
+
+def game_label() -> str:
+    """Human game name for prompts (e.g. "Red", "Yellow")."""
+    return GAME_LABELS[resolve_game()]
+
+
 def resolve_proposer() -> str:
     """Who proposes the next genome: ``trained`` (the SFT adapter), ``ollama``, or ``heuristic``.
 

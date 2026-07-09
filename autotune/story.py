@@ -7,7 +7,8 @@ It is built from concepts that already exist in pokemon-kafka:
     (mirrored here so autotune stays decoupled from pk's ``scripts/`` import path), and
   - per-beat content (display name + waypoints) is read from ``references/routes.json``.
 
-The default story is the canonical Route-1 opening of Pokemon Red:
+The default story is the canonical Route-1 opening of Pokemon Red (map IDs are
+identical across Red/Blue/Yellow, so the same spec scores all three games):
 Player's house -> Oak's Lab -> Pallet Town -> Route 1 -> Viridian City -> Route 2 ->
 Viridian Forest -> Pewter City.
 """
