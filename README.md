@@ -100,6 +100,11 @@ For results from the constrained learning experiments (why tuning the 12-paramet
 saturates on early-game tasks — and the 2026-07-05 addendum on where the signal actually was),
 see [docs/experiment-findings.md](docs/experiment-findings.md).
 
+The forest-crossing genome proposer this loop trained is published as
+[bdougie/smollm3-forest-lora](https://huggingface.co/bdougie/smollm3-forest-lora); to serve it
+locally as an OpenAI-compatible API (for [pi](https://github.com/badlogic/pi-mono) or curl), run
+`scripts/serve_forest_lora.sh` — see [docs/serving-forest-lora.md](docs/serving-forest-lora.md).
+
 ## Layout
 | File | Role |
 |---|---|
