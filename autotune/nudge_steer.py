@@ -19,6 +19,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from autotune.config import game_label
 from autotune.genome import DEFAULT_PARAMS, PARAM_BOUNDS, PARAM_DESCRIPTIONS, clamp_params
 from autotune.story import Story
 from autotune.verifier import RolloutVerdict
@@ -48,7 +49,8 @@ def build_mutation_prompt(
         hist_section = "\nPrevious generations:\n" + "\n".join(lines) + "\n"
 
     desc = "\n".join(f"- {k}: {v}" for k, v in PARAM_DESCRIPTIONS.items())
-    return f"""You are tuning navigation parameters for a Pokemon Red agent to enforce a story.
+    label = game_label()
+    return f"""You are tuning navigation parameters for a Pokemon {label} agent to enforce a story.
 
 Story goal: reach beat {target.beat_id} '{target.name}' (map {target.map_id}), in order.
 This rollout reached beat {verdict.furthest_beat} '{verdict.furthest_beat_name}'

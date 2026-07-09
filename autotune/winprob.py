@@ -221,7 +221,7 @@ def collect_rows(
     from autotune.rollout import run_one
 
     if cfg.env.rom_path is None:
-        raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM.")
+        raise RuntimeError("ROM_PATH is not set — point it at a Gen-1 ROM (Red/Blue/Yellow).")
     work_root = Path(work_root)
     work_root.mkdir(parents=True, exist_ok=True)
     rom = str(cfg.env.rom_path.resolve())

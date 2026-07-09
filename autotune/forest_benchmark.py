@@ -142,7 +142,7 @@ def run_forest_benchmark(  # pragma: no cover - emulator sweep, exercised by the
     if not checkpoints:
         raise SystemExit(f"No checkpoints found in {adapter_dir} to benchmark.")
     if cfg.env.rom_path is None:
-        raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM.")
+        raise RuntimeError("ROM_PATH is not set — point it at a Gen-1 ROM (Red/Blue/Yellow).")
     rom = str(cfg.env.rom_path.resolve())
     route = ROUTE_DEFAULT if Path(ROUTE_DEFAULT).exists() else None
 

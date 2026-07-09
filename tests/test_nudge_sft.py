@@ -263,3 +263,25 @@ def test_write_sft_data_strips_domains(tmp_path):
     for p in (train_path, valid_path):
         for ln in p.read_text().splitlines():
             assert set(json.loads(ln)) == {"messages"}
+
+
+def test_forest_mutation_prompt_names_game(monkeypatch):
+    from autotune.forest_story import ForestVerdict
+    from autotune.nudge_sft import build_forest_mutation_prompt
+
+    monkeypatch.setenv("AUTOTUNE_GAME", "yellow")
+
+    class _Sig:
+        trainer_wins = 0
+
+    verdict = ForestVerdict(
+        furthest_beat=1,
+        furthest_beat_name="entered forest",
+        beats_passed=1,
+        per_beat=(1, 0, 0, 0, 0, 0, 0, 0),
+        reward=1.0,
+        crossed=False,
+        signals=_Sig(),
+    )
+    prompt = build_forest_mutation_prompt({"hp_run_threshold": 0.2}, verdict)
+    assert "Pokemon Yellow agent" in prompt

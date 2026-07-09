@@ -105,6 +105,12 @@ The forest-crossing genome proposer this loop trained is published as
 locally as an OpenAI-compatible API (for [pi](https://github.com/badlogic/pi-mono) or curl), run
 `scripts/serve_forest_lora.sh` — see [docs/serving-forest-lora.md](docs/serving-forest-lora.md).
 
+After the GameProfile refactor made the agent play Red, Blue, and Yellow, we retrained the adapter
+on a **game-agnostic corpus** (game-labelled Red + Blue + Yellow telemetry). Base SmolLM3 scores 0%
+on the Yellow-labelled ground-truth prompts; the retrained model scores 75%, while still improving
+on held-out Red — see [docs/game-agnostic-retrain.md](docs/game-agnostic-retrain.md) for the
+corpus, the MLX learning-rate fix, convergence, and full benchmarks.
+
 ## Layout
 | File | Role |
 |---|---|

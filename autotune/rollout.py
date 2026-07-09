@@ -93,7 +93,9 @@ def run_one(
 ) -> Rollout:
     """Run a single rollout to completion and load its artifacts."""
     if cfg.env.rom_path is None:
-        raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM to run rollouts.")
+        raise RuntimeError(
+            "ROM_PATH is not set — point it at a Gen-1 ROM (Red/Blue/Yellow) to run rollouts."
+        )
 
     rollout_dir = work_root / f"rollout-{index}"
     telemetry_dir = rollout_dir / "telemetry"

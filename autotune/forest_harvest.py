@@ -53,7 +53,7 @@ def harvest(
     Returns a summary; writes ``leaderboard.json`` (every genome → reward) and the SFT data.
     """
     if cfg.env.rom_path is None:
-        raise RuntimeError("ROM_PATH is not set — point it at a Pokemon Red ROM.")
+        raise RuntimeError("ROM_PATH is not set — point it at a Gen-1 ROM (Red/Blue/Yellow).")
     rom = str(cfg.env.rom_path.resolve())
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

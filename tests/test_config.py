@@ -55,3 +55,31 @@ def test_resolve_env_and_story(monkeypatch):
     assert env.agent_script.as_posix() == "/tmp/pk/scripts/agent.py"
     assert env.routes_json.as_posix() == "/tmp/pk/references/routes.json"
     assert config.resolve_story().target_map_id == 2
+
+
+def test_resolve_game_default_is_legacy_red(monkeypatch):
+    from autotune.config import game_label, resolve_game
+
+    monkeypatch.delenv("AUTOTUNE_GAME", raising=False)
+    assert resolve_game() == "red"
+    assert game_label() == "Red"
+
+
+def test_resolve_game_env_override(monkeypatch):
+    from autotune.config import game_label, resolve_game
+
+    monkeypatch.setenv("AUTOTUNE_GAME", "yellow")
+    assert resolve_game() == "yellow"
+    assert game_label() == "Yellow"
+    monkeypatch.setenv("AUTOTUNE_GAME", "red_blue")
+    assert game_label() == "Red/Blue"
+
+
+def test_resolve_game_rejects_unknown(monkeypatch):
+    import pytest
+
+    from autotune.config import resolve_game
+
+    monkeypatch.setenv("AUTOTUNE_GAME", "crystal")
+    with pytest.raises(ValueError):
+        resolve_game()

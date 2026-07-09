@@ -20,16 +20,25 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from autotune.config import game_label
 from autotune.forest_story import ForestVerdict, pair_domains
 from autotune.genome import PARAM_DESCRIPTIONS, clamp_params
 from autotune.nudge_steer import build_mutation_prompt
 from autotune.story import Story
 from autotune.verifier import RolloutVerdict
 
-_SYSTEM = (
-    "You tune a Pokemon Red agent's navigation genome to advance a fixed story, in order. "
-    "Given the current situation, respond with ONLY the JSON genome that advances furthest."
-)
+
+def _system_prompt(label: str) -> str:
+    return (
+        f"You tune a Pokemon {label} agent's navigation genome to advance a fixed story, in "
+        "order. Given the current situation, respond with ONLY the JSON genome that advances "
+        "furthest."
+    )
+
+
+# Resolved from AUTOTUNE_GAME at import (defaults to the legacy "Red" label, matching
+# the prompts every existing adapter was trained on).
+_SYSTEM = _system_prompt(game_label())
 
 
 @dataclass(frozen=True)
@@ -166,11 +175,15 @@ def write_sft_data(
 # emitting the genome that survived furthest. Identical pair logic to ``build_dataset`` above, but
 # scored by :class:`autotune.forest_story.ForestVerdict` instead of the map-grained story.
 
-_FOREST_SYSTEM = (
-    "You tune a Pokemon Red agent's battle/survival genome to cross Viridian Forest to Pewter "
-    "City. Navigation is hand-driven; your genome decides survival. Given the situation, respond "
-    "with ONLY the JSON genome that survives furthest through the forest."
-)
+def _forest_system_prompt(label: str) -> str:
+    return (
+        f"You tune a Pokemon {label} agent's battle/survival genome to cross Viridian Forest to "
+        "Pewter City. Navigation is hand-driven; your genome decides survival. Given the "
+        "situation, respond with ONLY the JSON genome that survives furthest through the forest."
+    )
+
+
+_FOREST_SYSTEM = _forest_system_prompt(game_label())
 
 
 @dataclass(frozen=True)
@@ -203,7 +216,8 @@ def build_forest_mutation_prompt(params: dict, verdict: ForestVerdict) -> str:
     is no train/inference skew (mirrors ``build_pair_example`` for the map story).
     """
     desc = "\n".join(f"- {k}: {v}" for k, v in PARAM_DESCRIPTIONS.items())
-    return f"""You tune a Pokemon Red agent's genome to cross Viridian Forest to Pewter City.
+    label = game_label()
+    return f"""You tune a Pokemon {label} agent's genome to cross Viridian Forest to Pewter City.
 Navigation is hand-driven along the route; your genome controls battle and survival — whether to
 flee or fight wild encounters (hp_run_threshold), when to heal (hp_heal_threshold), and how to
 pick moves. Surviving the catchers and the wild grass is what gets the lead to the exit.

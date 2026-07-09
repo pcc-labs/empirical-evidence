@@ -195,6 +195,13 @@ class MacProfile:
     lora_rank: int = 16
     lora_scale: float = 16.0
     lora_dropout: float = 0.05
+    # LR schedule (warmup then cosine decay). Unlike the CUDA/TRL path, mlx_lm.lora
+    # applies ``learning_rate`` as a CONSTANT unless a schedule is given — and 2e-4
+    # constant DIVERGES on this corpus (val loss climbs 3.6→6.0). Warmup + cosine decay
+    # to ``lr_min`` is what makes the MLX run converge (val loss 3.6→0.3), matching the
+    # CUDA cosine recipe that produced sft_v3.
+    warmup_steps: int = 60
+    lr_min: float = 1e-6
     # Data-prep budget (token ceiling per SFT example)
     max_tokens: int = 4096
 
@@ -304,6 +311,25 @@ def resolve_ollama() -> OllamaConfig:
         model=os.environ.get("AUTOTUNE_OLLAMA_MODEL", "qwen3:8b"),
         host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
     )
+
+
+# Which game the loop is tuning against, for prompt labels. "red" is the legacy
+# default — existing adapters (forest-lora, sft_v3) were trained on "Pokemon Red"
+# prompts, so an unset env must not silently shift the prompt distribution.
+GAME_LABELS = {"red": "Red", "red_blue": "Red/Blue", "yellow": "Yellow"}
+
+
+def resolve_game() -> str:
+    """``AUTOTUNE_GAME`` env (``red_blue`` | ``yellow``); default legacy ``red``."""
+    value = os.environ.get("AUTOTUNE_GAME", "red")
+    if value not in GAME_LABELS:
+        raise ValueError(f"Unknown AUTOTUNE_GAME={value!r}; choose from {sorted(GAME_LABELS)}")
+    return value
+
+
+def game_label() -> str:
+    """Human game name for prompts (e.g. "Red", "Yellow")."""
+    return GAME_LABELS[resolve_game()]
 
 
 def resolve_proposer() -> str:

@@ -219,3 +219,39 @@ def test_end_to_end_snapshot(tmp_path):
     assert h1 == h2
     train = [json.loads(x) for x in (tmp_path / "sft" / "train.jsonl").read_text().splitlines()]
     assert all("domain" not in row for row in train)
+
+
+# ---------------------------------------------------------------------------
+# Game-labelled prompts
+# ---------------------------------------------------------------------------
+
+
+def test_game_label_mapping():
+    from autotune.convert_telemetry import game_label
+
+    assert game_label({"game": "yellow"}) == "Yellow"
+    assert game_label({"game": "red_blue"}) == "Red/Blue"
+    assert game_label({}) == "Red"  # legacy telemetry predates the field
+    assert game_label(None) == "Red"
+
+
+def test_battle_system_names_game():
+    from autotune.convert_telemetry import battle_system
+
+    assert "Pokemon Yellow agent" in battle_system("Yellow")
+    assert "Pokemon Red agent" in battle_system("Red")
+
+
+def test_yellow_event_produces_yellow_prompt():
+    events, _ = load_events([FIXTURES])
+    outcome = next(e for e in events if e["event_type"] == "battle_outcome")
+    tagged = dict(outcome)
+    tagged["game"] = "yellow"
+    examples = gen_battle_outcome([tagged])
+    assert "Pokemon Yellow agent" in examples[0]["messages"][0]["content"]
+
+
+def test_legacy_events_keep_red_prompt():
+    events, _ = load_events([FIXTURES])
+    examples = gen_battle_outcome(events)
+    assert "Pokemon Red agent" in examples[0]["messages"][0]["content"]
