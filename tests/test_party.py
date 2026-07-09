@@ -147,3 +147,61 @@ def test_recompute_uses_derived_hp_dv():
     odd_hp = recompute(odd, BASE_STATS[0xB1], 14)["max_hp"]
     even_hp = recompute(even, BASE_STATS[0xB1], 14)["max_hp"]
     assert odd_hp > even_hp
+
+
+# ---------------------------------------------------------------------------
+# Game-profile awareness
+# ---------------------------------------------------------------------------
+
+
+class _FakePyBoy:
+    """Dict-backed pyboy.memory stand-in (defaults to 0)."""
+
+    class _Mem(dict):
+        def __missing__(self, key):
+            return 0
+
+    def __init__(self, title="POKEMON RED"):
+        self.memory = self._Mem()
+        self.cartridge_title = title
+
+
+def test_slot_base_uses_profile():
+    from autotune.game_profile import RED_BLUE, YELLOW
+    from autotune.party import PARTY_STRUCT_SIZE, _slot_base
+
+    assert _slot_base(0) == RED_BLUE.party_base  # default stays Red/Blue
+    assert _slot_base(1, YELLOW) == YELLOW.party_base + PARTY_STRUCT_SIZE
+
+
+def test_set_bag_writes_at_yellow_addresses():
+    from autotune.game_profile import YELLOW
+    from autotune.party import set_bag
+
+    pb = _FakePyBoy(title="POKEMON YELLOW")
+    set_bag(pb, [(0x14, 5)], profile=YELLOW)
+    assert pb.memory[YELLOW.bag_count_addr] == 1
+    assert pb.memory[YELLOW.bag_items_addr] == 0x14
+    assert pb.memory[YELLOW.bag_items_addr + 1] == 5
+    assert pb.memory[YELLOW.bag_items_addr + 2] == 0xFF
+
+
+def test_set_bag_detects_profile_from_cartridge():
+    from autotune.game_profile import YELLOW
+    from autotune.party import set_bag
+
+    pb = _FakePyBoy(title="POKEMON YELLOW")
+    set_bag(pb, [(0x14, 5)])  # no profile passed: detect from the pyboy handle
+    assert pb.memory[YELLOW.bag_count_addr] == 1
+
+
+def test_pikachu_moveset_for_level_yellow():
+    from autotune.party import MOVE_PP, moveset_for_level
+
+    # L11 Yellow Pikachu: newest 4 of Thundershock/Growl/Tail Whip/T-Wave/Quick Attack
+    moves = moveset_for_level(0x54, 11)
+    assert moves is not None
+    ids = [mid for mid, _pp in moves]
+    assert ids == [0x2D, 0x27, 0x56, 0x62]  # Growl, Tail Whip, Thunder Wave, Quick Attack
+    for mid, pp in moves:
+        assert pp == MOVE_PP[mid]

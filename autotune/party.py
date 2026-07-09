@@ -24,7 +24,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-# --- Party struct layout (offsets within each 44-byte wPartyMon, base = PARTY_BASE + slot*44) ---
+from autotune.game_profile import RED_BLUE, GameProfile, detect_profile
+
+# --- Party struct layout (offsets within each 44-byte wPartyMon, base = party_base + slot*44) ---
+# Red/Blue defaults for reference; the RAM I/O layer resolves addresses via a GameProfile
+# (auto-detected from the pyboy cartridge title when not passed).
 PARTY_BASE = 0xD16B
 PARTY_STRUCT_SIZE = 44
 ADDR_PARTY_COUNT = 0xD163
@@ -110,6 +114,17 @@ MOVE_PP: dict[int, int] = {
     0xA3: 20,  # Slash
     0x35: 25,  # Flamethrower
     0x53: 15,  # Fire Spin
+    # Pikachu line (PP from pokeyellow data/moves/moves.asm)
+    0x54: 30,  # Thundershock
+    0x27: 30,  # Tail Whip
+    0x56: 20,  # Thunder Wave
+    0x62: 30,  # Quick Attack
+    0x68: 15,  # Double Team
+    0x15: 20,  # Slam
+    0x55: 15,  # Thunderbolt
+    0x61: 30,  # Agility
+    0x57: 10,  # Thunder
+    0x71: 30,  # Light Screen
 }
 
 # Gen-1 level-up learnsets (level, move_id), ascending by level. Poking a level WITHOUT the
@@ -136,6 +151,21 @@ LEARNSETS: dict[int, list[tuple[int, int]]] = {
         (33, 0xA3),
         (42, 0x35),
         (56, 0x53),
+    ],
+    0x54: [  # Pikachu — YELLOW learnset (pokeyellow data/pokemon/evos_moves.asm); the
+        # Yellow starter is the use-case for leveling a Pikachu lead. R/B wild Pikachu
+        # learn on a different schedule — out of scope until something pokes one.
+        (1, 0x54),  # Thundershock
+        (1, 0x2D),  # Growl
+        (6, 0x27),  # Tail Whip
+        (8, 0x56),  # Thunder Wave
+        (11, 0x62),  # Quick Attack
+        (15, 0x68),  # Double Team
+        (20, 0x15),  # Slam
+        (26, 0x55),  # Thunderbolt
+        (33, 0x61),  # Agility
+        (41, 0x57),  # Thunder
+        (50, 0x71),  # Light Screen
     ],
 }
 
@@ -214,8 +244,8 @@ def recompute(mon: LeadMon, base: tuple[int, int, int, int, int], level: int) ->
 # ---------------------------------------------------------------------------
 
 
-def _slot_base(slot: int) -> int:
-    return PARTY_BASE + slot * PARTY_STRUCT_SIZE
+def _slot_base(slot: int, profile: GameProfile = RED_BLUE) -> int:
+    return profile.party_base + slot * PARTY_STRUCT_SIZE
 
 
 def _r16(pyboy, addr: int) -> int:
@@ -237,9 +267,10 @@ def _w24(pyboy, addr: int, value: int) -> None:
     pyboy.memory[addr + 2] = value & 0xFF
 
 
-def read_lead(pyboy, slot: int = 0) -> LeadMon:
+def read_lead(pyboy, slot: int = 0, profile: GameProfile | None = None) -> LeadMon:
     """Decode the lead party member's level-independent attributes from RAM."""
-    b = _slot_base(slot)
+    profile = profile or detect_profile(pyboy)
+    b = _slot_base(slot, profile)
     dvs = _r16(pyboy, b + OFF_DV)
     return LeadMon(
         species=pyboy.memory[b + OFF_SPECIES],
@@ -257,13 +288,19 @@ def read_lead(pyboy, slot: int = 0) -> LeadMon:
 
 
 def set_lead_level(
-    pyboy, level: int, slot: int = 0, full_heal: bool = True, grant_moves: bool = True
+    pyboy,
+    level: int,
+    slot: int = 0,
+    full_heal: bool = True,
+    grant_moves: bool = True,
+    profile: GameProfile | None = None,
 ) -> dict:
     """Set the lead's level and recompute/write HP + the four stats. With ``grant_moves`` (default),
     also grant the level-appropriate moveset (so a poked lead isn't stuck on its capture-time
     moves — e.g. a leveled Charmander gets Ember, which it needs to beat Brock). Returns the
     read-back."""
-    mon = read_lead(pyboy, slot)
+    profile = profile or detect_profile(pyboy)
+    mon = read_lead(pyboy, slot, profile)
     if mon.species not in BASE_STATS:
         raise KeyError(
             f"No base stats for species 0x{mon.species:02X}; add it to BASE_STATS before poking."
@@ -273,7 +310,7 @@ def set_lead_level(
             f"No growth group for 0x{mon.species:02X}; add it to GROWTH_GROUP before poking."
         )
     stats = recompute(mon, BASE_STATS[mon.species], level)
-    b = _slot_base(slot)
+    b = _slot_base(slot, profile)
     pyboy.memory[b + OFF_LEVEL] = level
     pyboy.memory[b + OFF_BOX_LEVEL] = level  # keep the box copy consistent
     # Authoritative: set EXP to the level's threshold, or the game re-derives the level from stale
@@ -293,14 +330,15 @@ def set_lead_level(
                 mid, pp = moves[i] if i < len(moves) else (0, 0)
                 pyboy.memory[b + OFF_MOVES + i] = mid
                 pyboy.memory[b + OFF_PP + i] = pp
-    return verify_lead(pyboy, level, slot)
+    return verify_lead(pyboy, level, slot, profile)
 
 
-def verify_lead(pyboy, level: int, slot: int = 0) -> dict:
+def verify_lead(pyboy, level: int, slot: int = 0, profile: GameProfile | None = None) -> dict:
     """Read the lead back and assert level + stats match the formula. Raises on drift."""
-    mon = read_lead(pyboy, slot)
+    profile = profile or detect_profile(pyboy)
+    mon = read_lead(pyboy, slot, profile)
     expected = recompute(mon, BASE_STATS[mon.species], level)
-    b = _slot_base(slot)
+    b = _slot_base(slot, profile)
     actual = {
         "level": mon.level,
         "max_hp": _r16(pyboy, b + OFF_MAX_HP),
@@ -321,22 +359,24 @@ def verify_lead(pyboy, level: int, slot: int = 0) -> dict:
     return actual
 
 
+# Red/Blue defaults for reference; set_bag resolves via the game profile.
 BAG_COUNT_ADDR = 0xD31D
-BAG_ITEMS_ADDR = 0xD31E  # pairs of [item_id, quantity], 0xFF-terminated (Gen-1 Red)
+BAG_ITEMS_ADDR = 0xD31E  # pairs of [item_id, quantity], 0xFF-terminated (Gen-1)
 # Gen-1 item ids (decimal): 20=Potion, 19=Super Potion, 18=Hyper Potion. NOTE pokemon-kafka's
 # HEALING_ITEM_IDS mislabels 0x19 (25 = SoulBadge) as "Super Potion" — do NOT use 0x19 here.
 POTION_ID = 0x14  # 20 = Potion (heals 20 HP) — confirmed correct
 SUPER_POTION_ID = 0x13  # 19 = Super Potion (heals 50 HP)
 
 
-def set_bag(pyboy, items: list[tuple[int, int]]) -> None:
+def set_bag(pyboy, items: list[tuple[int, int]], profile: GameProfile | None = None) -> None:
     """Overwrite the bag with ``(item_id, quantity)`` pairs, 0xFF-terminated. Emulator-touching.
 
     The forest states ship with an empty bag, so the agent's ``hp_heal_threshold`` is inert and the
     lead bleeds out in the grass. Stocking potions makes healing a live survival lever.
     """
-    pyboy.memory[BAG_COUNT_ADDR] = len(items)
-    addr = BAG_ITEMS_ADDR
+    profile = profile or detect_profile(pyboy)
+    pyboy.memory[profile.bag_count_addr] = len(items)
+    addr = profile.bag_items_addr
     for item_id, qty in items:
         pyboy.memory[addr] = item_id & 0xFF
         pyboy.memory[addr + 1] = qty & 0xFF
@@ -390,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
     from pathlib import Path
 
     p = argparse.ArgumentParser(description="Generate pre-Brock party variants by level.")
-    p.add_argument("rom", help="Path to the Pokemon Red ROM")
+    p.add_argument("rom", help="Path to a Gen-1 Pokemon ROM (Red/Blue/Yellow)")
     p.add_argument("--in-state", required=True, help="Captured pre-Brock save state")
     p.add_argument("--out-dir", default="./states/brock", help="Where to write level variants")
     p.add_argument("--levels", default="10,12,14,16", help="Comma-separated target levels")
