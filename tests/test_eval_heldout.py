@@ -33,3 +33,45 @@ def test_score_rows_accuracy_per_domain():
 
     scores = score_rows(rows, predict)
     assert scores == {"battle-outcome": 0.5, "move-choice": 1.0}
+
+
+def test_game_label_of_reads_system_prompt():
+    from autotune.eval_heldout import game_label_of
+
+    def r(label):
+        return {"messages": [{"role": "system", "content": f"advisor for a Pokemon {label} agent"}]}
+
+    assert game_label_of(r("Yellow")) == "Yellow"
+    assert game_label_of(r("Red/Blue")) == "Red/Blue"
+    assert game_label_of(r("Red")) == "Red"
+    assert game_label_of({"messages": [{"role": "system", "content": "no game named"}]}) == "Red"
+
+
+def test_score_rows_by_game_splits_accuracy():
+    from autotune.eval_heldout import score_rows_by_game
+
+    def sysmsg(label):
+        return f"You are the battle advisor for a Pokemon {label} agent."
+
+    rows = [
+        {"domain": "battle-outcome", "messages": [
+            {"role": "system", "content": sysmsg("Yellow")},
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": json.dumps({"win": True})}]},
+        {"domain": "battle-outcome", "messages": [
+            {"role": "system", "content": sysmsg("Red")},
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": json.dumps({"win": False})}]},
+        {"domain": "narrator", "messages": [
+            {"role": "system", "content": sysmsg("Yellow")},
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "ignored, not gated"}]},
+    ]
+
+    def predict(system, user):
+        return json.dumps({"win": True})  # correct for Yellow row, wrong for Red row
+
+    by_game = score_rows_by_game(rows, predict)
+    assert by_game["Yellow"] == {"accuracy": 1.0, "n": 1}
+    assert by_game["Red"] == {"accuracy": 0.0, "n": 1}
+    assert "narrator" not in str(by_game)  # non-gated rows excluded
