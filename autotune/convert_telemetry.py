@@ -55,9 +55,24 @@ def chat(system: str, user: str, assistant: str, domain: str) -> dict:
     }
 
 
-BATTLE_SYSTEM = (
-    "You are the battle advisor for a Pokemon Red agent. Answer with only the requested JSON."
-)
+# Telemetry events stamped by pokemon-kafka carry a "game" field; legacy files predate
+# it, and everything recorded before the field existed was a Pokemon Red run.
+GAME_LABELS = {"red_blue": "Red/Blue", "yellow": "Yellow"}
+
+
+def game_label(event: dict | None) -> str:
+    """Human game name for prompts ("Red" for legacy events without the field)."""
+    return GAME_LABELS.get((event or {}).get("game", ""), "Red")
+
+
+def battle_system(label: str) -> str:
+    return (
+        f"You are the battle advisor for a Pokemon {label} agent. "
+        "Answer with only the requested JSON."
+    )
+
+
+BATTLE_SYSTEM = battle_system("Red")  # legacy default, kept for reference
 
 
 def gen_battle_outcome(events: list[dict]) -> list[dict]:
@@ -80,7 +95,7 @@ def gen_battle_outcome(events: list[dict]) -> list[dict]:
             'Respond with JSON {"win": bool, "recommendation": "fight"|"flee"}.'
         )
         answer = json.dumps({"win": d["won"], "recommendation": "fight" if d["won"] else "flee"})
-        out.append(chat(BATTLE_SYSTEM, user, answer, "battle-outcome"))
+        out.append(chat(battle_system(game_label(e)), user, answer, "battle-outcome"))
     return out
 
 
@@ -105,6 +120,7 @@ def gen_move_choice(events: list[dict]) -> list[dict]:
     """move_result rows -> per-row damage buckets + aggregated best-move picks."""
     out = []
     by_matchup: dict[tuple[str, str], dict[str, list[int]]] = {}
+    matchup_labels: dict[tuple[str, str], str] = {}
     for e in events:
         if e.get("event_type") != "move_result":
             continue
@@ -118,8 +134,11 @@ def gen_move_choice(events: list[dict]) -> list[dict]:
             "How much damage relative to the enemy's max HP? "
             'Respond with JSON {"bucket": "none"|"weak"|"solid"|"heavy"}.'
         )
-        out.append(chat(BATTLE_SYSTEM, user, json.dumps({"bucket": bucket}), "move-choice"))
+        out.append(
+            chat(battle_system(game_label(e)), user, json.dumps({"bucket": bucket}), "move-choice")
+        )
         key = (d["user_species"], d["enemy_type"])
+        matchup_labels.setdefault(key, game_label(e))
         by_matchup.setdefault(key, {}).setdefault(f"{d['move']} ({d['move_type']})", []).append(
             d["damage_dealt"]
         )
@@ -137,7 +156,14 @@ def gen_move_choice(events: list[dict]) -> list[dict]:
             f"Observed moves: {moves_desc}.\n"
             'Which move deals the most damage? Respond with JSON {"move": "..."}.'
         )
-        out.append(chat(BATTLE_SYSTEM, user, json.dumps({"move": best_name}), "move-choice"))
+        out.append(
+            chat(
+                battle_system(matchup_labels[(species, enemy_type)]),
+                user,
+                json.dumps({"move": best_name}),
+                "move-choice",
+            )
+        )
     return out
 
 
@@ -180,16 +206,22 @@ def gen_battle_action(events: list[dict], rng: random.Random, cap: int = 800) ->
                 "Choose the next action. Respond with the action JSON, e.g. "
                 '{"action": "fight", "move": "..."} or {"action": "run"}.'
             )
-            out.append(chat(BATTLE_SYSTEM, user, json.dumps(action), "battle-action"))
+            out.append(
+                chat(battle_system(game_label(e)), user, json.dumps(action), "battle-action")
+            )
     if len(out) > cap:
         out = rng.sample(out, cap)
     return out
 
 
-GENOME_SYSTEM = "You tune a Pokemon Red agent's survival genome. Respond with only the genome JSON."
+def genome_system(label: str) -> str:
+    return f"You tune a Pokemon {label} agent's survival genome. Respond with only the genome JSON."
 
 
-def gen_genome(rollout_roots: list[Path]) -> list[dict]:
+GENOME_SYSTEM = genome_system("Red")  # legacy default, kept for reference
+
+
+def gen_genome(rollout_roots: list[Path], label: str = "Red") -> list[dict]:
     """Above-median rollout genomes per scenario -> fitness-summary -> genome examples."""
     out = []
     for root in rollout_roots:
@@ -220,13 +252,20 @@ def gen_genome(rollout_roots: list[Path]) -> list[dict]:
                     f"and visited {maps} maps.\n"
                     "Propose the genome JSON that achieved this."
                 )
-                out.append(chat(GENOME_SYSTEM, user, json.dumps(genome, sort_keys=True), "genome"))
+                out.append(
+                    chat(genome_system(label), user, json.dumps(genome, sort_keys=True), "genome")
+                )
     return out
 
 
-NARRATOR_SYSTEM = (
-    "You are the live commentator for an autonomous Pokemon Red run. Reply with one short sentence."
-)
+def narrator_system(label: str) -> str:
+    return (
+        f"You are the live commentator for an autonomous Pokemon {label} run. "
+        "Reply with one short sentence."
+    )
+
+
+NARRATOR_SYSTEM = narrator_system("Red")  # legacy default, kept for reference
 
 NARRATOR_TEMPLATES: dict[str, list[str]] = {
     "milestone": [
@@ -283,7 +322,7 @@ def gen_narrator(events: list[dict], rng: random.Random) -> list[dict]:
             "Narrate this game event for the stream overlay in one sentence:\n"
             f"{json.dumps(e.get('data', {}), sort_keys=True)}"
         )
-        out.append(chat(NARRATOR_SYSTEM, user, sentence, "narrator"))
+        out.append(chat(narrator_system(game_label(e)), user, sentence, "narrator"))
     return out
 
 
@@ -416,7 +455,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--min-total", type=int, default=500)
     p.add_argument("--action-cap", type=int, default=800)
+    p.add_argument(
+        "--game",
+        choices=["red", "red_blue", "yellow"],
+        default="red",
+        help="Game label for genome examples (rollout artifacts carry no game field; "
+        "telemetry-derived examples label themselves from each event)",
+    )
     args = p.parse_args(argv)
+    genome_label = {"red": "Red", **GAME_LABELS}[args.game]
 
     rng = random.Random(args.seed)
     events, skipped = load_events([args.pk_data, args.ee_data])
@@ -426,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         gen_battle_outcome(events)
         + gen_move_choice(events)
         + gen_battle_action(events, rng, cap=args.action_cap)
-        + gen_genome(rollout_roots)
+        + gen_genome(rollout_roots, label=genome_label)
         + gen_narrator(events, rng)
     )
     examples = dedupe(examples)
