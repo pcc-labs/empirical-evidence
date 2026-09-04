@@ -61,6 +61,9 @@ Unset `CORPUS_DIR` / `ADAPTER_DIR` and both jobs behave exactly as under
 pushes the local adapter and GGUF to the same repos, for a box that wants the
 Hub as its archive.
 
+Run 1's results, and what they do and do not show, are in
+[tetris-distillation-findings.md](tetris-distillation-findings.md).
+
 ## What was verified on the box (2026-09-04)
 
 Run against an 18-row smoke corpus built from `tests/fixtures/tetris_run`
