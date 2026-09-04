@@ -155,6 +155,10 @@ def mint(
         mint_started = f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
         rows: list[dict] = []
         manifest_path = runs_dir / f"mint-{project}.jsonl"
+        # `runs/` is gitignored in tetris, so a fresh checkout has none until the
+        # first tetris-bench creates it -- and the manifest is opened before the
+        # first game runs. Without this the first real mint dies on FileNotFoundError.
+        runs_dir.mkdir(parents=True, exist_ok=True)
         with open(manifest_path, "w") as manifest:
             for i, seed in enumerate(seeds):
                 before = _run_dirs(runs_dir)

@@ -189,3 +189,43 @@ def test_mint_writes_the_manifest_incrementally_surviving_a_later_raise(tmp_path
         )
     manifest = [json.loads(x) for x in (runs / "mint-p.jsonl").read_text().splitlines()]
     assert [row["seed"] for row in manifest] == [100]  # seed 100's row survived the raise
+
+
+def test_mint_creates_the_runs_dir_when_the_checkout_has_none(tmp_path):
+    """`runs/` is gitignored in tetris, so a fresh checkout has none until the
+    first game writes one -- but the manifest is opened before the first game."""
+
+    class FakeProc:
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            pass
+
+    runs = tmp_path / "runs"
+    assert not runs.exists()
+
+    def fake_run(cmd, cwd=None, env=None, check=True, **kw):
+        seed = cmd[cmd.index("--seeds") + 1]
+        d = runs / f"20260904-00000{seed}-abc"
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(json.dumps({"label": "pi/gemma4:26b/features/off+fixed"}))
+        (d / "summary.json").write_text(json.dumps({"run_id": d.name, "fitness": {}}))
+
+    rows = mint(
+        [100],
+        tetris_dir=tmp_path,
+        model="pi/gemma4:26b",
+        max_pieces=10,
+        project="p",
+        proxy_listen="127.0.0.1:8092",
+        upstream="http://127.0.0.1:11434",
+        startup_s=0.0,
+        run=fake_run,
+        popen=lambda *a, **k: FakeProc(),
+        answers=lambda url, timeout_s=2.0: True,
+        postgres_check=lambda: True,
+        turns_query=lambda *a, **k: 7,
+    )
+    assert [r["seed"] for r in rows] == [100]
+    assert (runs / "mint-p.jsonl").is_file()
