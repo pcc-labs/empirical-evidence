@@ -1,4 +1,12 @@
-from autotune.tetris_train_job import grade_answers, parse_placement
+import json
+
+from autotune.tetris_train_job import (
+    generate_tier1,
+    grade_answers,
+    parse_placement,
+    upload_adapter,
+    upload_tier1,
+)
 
 
 def test_parse_placement_reads_the_first_json_object():
@@ -49,3 +57,70 @@ def test_grade_answers_scores_rank_regret_and_agreement():
 def test_grade_answers_treats_an_illegal_placement_as_a_parse_failure():
     out = grade_answers(_rows()[:1], ['{"rotation": 3, "col": 9}'])
     assert out["parse_failures"] == 1 and out["top1"] == 0.0
+
+
+class _FakeApi:
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def create_repo(self, *a, **kw):
+        self.calls.append(("create_repo", a, kw))
+
+    def upload_folder(self, *a, **kw):
+        self.calls.append(("upload_folder", a, kw))
+
+    def create_tag(self, *a, **kw):
+        self.calls.append(("create_tag", a, kw))
+
+
+def test_upload_adapter_pushes_the_adapter_folder_before_anything_tier1(tmp_path):
+    """The adapter must be pushed as its own commit right after training -- a
+    tier-1 crash after this point must never cost the weights."""
+    api = _FakeApi()
+    upload_adapter(api, tmp_path, "bdougie/x", "corpus-1")
+    names = [c[0] for c in api.calls]
+    assert names == ["create_repo", "upload_folder"]
+    _, args, kw = api.calls[1]
+    assert kw["repo_id"] == "bdougie/x" and kw["path_in_repo"] == "adapter"
+    assert "corpus-1" in kw["commit_message"]
+    # No tag yet -- that only happens once tier-1 has also been pushed.
+    assert not (tmp_path / "eval_tier1.json").exists()
+
+
+def test_generate_tier1_grades_only_what_was_generated_before_a_mid_loop_crash():
+    """generate() failing partway through -- OOM, a chat-template edge case --
+    must not discard the answers already produced; it must not propagate either,
+    since the weights this grades are already safely pushed by then."""
+    rows = _rows()
+    calls = []
+
+    def flaky_generate(row):
+        calls.append(row)
+        if len(calls) == 3:
+            raise RuntimeError("boom")
+        return '{"rotation": 0, "col": 3}'
+
+    tier1, answers = generate_tier1(rows, flaky_generate)
+    assert len(calls) == 3  # stopped at the crash; did not skip ahead or retry
+    assert answers == ['{"rotation": 0, "col": 3}', '{"rotation": 0, "col": 3}']
+    assert tier1["n"] == 2 and tier1["parse_failures"] == 0
+
+
+def test_generate_tier1_grades_every_row_when_nothing_crashes():
+    rows = _rows()
+    tier1, answers = generate_tier1(rows, lambda row: '{"rotation": 0, "col": 3}')
+    assert len(answers) == len(rows) == tier1["n"]
+
+
+def test_upload_tier1_writes_the_json_then_pushes_a_second_commit_and_tags(tmp_path):
+    api = _FakeApi()
+    tier1 = {"n": 2, "top1": 0.5}
+    upload_tier1(api, tmp_path, "bdougie/x", "corpus-1", tier1)
+    assert json.loads((tmp_path / "eval_tier1.json").read_text()) == tier1
+    names = [c[0] for c in api.calls]
+    assert names == ["upload_folder", "create_tag"]
+    _, args, kw = api.calls[0]
+    assert kw["repo_id"] == "bdougie/x" and kw["path_in_repo"] == "adapter"
+    assert "tier-1" in kw["commit_message"] or "corpus-1" in kw["commit_message"]
+    _, args, kw = api.calls[1]
+    assert kw.get("tag") == "corpus-1" or args[1:2] == ("corpus-1",)

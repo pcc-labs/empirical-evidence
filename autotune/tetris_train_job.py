@@ -102,6 +102,51 @@ def _env(name: str, default: str | None = None) -> str:
     return value
 
 
+def upload_adapter(api, out_dir: Path, adapter_repo: str, corpus_id: str) -> None:
+    """Push the trained weights as their own commit, before tier-1 runs at all.
+
+    A tier-1 crash -- OOM at generate, a chat-template edge case, empty
+    eval_rows -- must never discard an hour of paid GPU time worth of weights.
+    """
+    api.create_repo(adapter_repo, repo_type="model", private=True, exist_ok=True)
+    api.upload_folder(
+        folder_path=str(out_dir),
+        repo_id=adapter_repo,
+        path_in_repo="adapter",
+        commit_message=f"adapter from corpus {corpus_id}",
+    )
+
+
+def generate_tier1(eval_rows: list[dict], generate) -> tuple[dict, list[str]]:
+    """Grade a tier-1 answer per held-out row.
+
+    Any exception `generate(row)` raises is caught mid-loop and logged rather
+    than propagated, so a grading failure never costs the weights (already
+    uploaded by the time this runs) -- it grades whatever answers were produced
+    before the failure instead of losing the run.
+    """
+    answers: list[str] = []
+    try:
+        for row in eval_rows:
+            answers.append(generate(row))
+    except Exception as exc:  # noqa: BLE001 — must not cost the run already saved
+        print(f"[train_job] tier-1 generation failed after {len(answers)} rows: {exc!r}")
+    return grade_answers(eval_rows[: len(answers)], answers), answers
+
+
+def upload_tier1(api, out_dir: Path, adapter_repo: str, corpus_id: str, tier1: dict) -> None:
+    """Write eval_tier1.json under out_dir and push it as a second commit, then
+    tag the corpus -- the tag is the signal that both commits landed."""
+    (out_dir / "eval_tier1.json").write_text(json.dumps(tier1, indent=2))
+    api.upload_folder(
+        folder_path=str(out_dir),
+        repo_id=adapter_repo,
+        path_in_repo="adapter",
+        commit_message=f"tier-1 eval for corpus {corpus_id}",
+    )
+    api.create_tag(adapter_repo, tag=corpus_id, tag_message=f"corpus {corpus_id}", exist_ok=True)
+
+
 def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     import torch
     from datasets import Dataset
@@ -192,33 +237,34 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     trainer.save_model(str(out_dir))
     tokenizer.save_pretrained(str(out_dir))
 
-    # Tier 1: generate a placement per held-out board and grade it against the shipped ranking.
+    # Push the weights now, before tier-1 runs at all: a tier-1 crash must never
+    # cost the hour of paid GPU time that produced them.
+    api = HfApi()
+    upload_adapter(api, out_dir, adapter_repo, corpus_id)
+    print(f"[train_job] pushed {adapter_repo} adapter for corpus {corpus_id}")
+
+    # Tier 1: generate a placement per held-out board and grade it against the
+    # shipped ranking. generate_tier1 catches a mid-loop crash (OOM, a
+    # chat-template edge case) and grades whatever was produced before it.
     model.eval()
-    answers: list[str] = []
-    for row in eval_rows:
+
+    def _generate_one(row: dict) -> str:
         ids = tokenizer.apply_chat_template(
-            row["messages"], add_generation_prompt=True, return_tensors="pt"
+            row["messages"], add_generation_prompt=True,
+            tokenize=True, return_dict=False, return_tensors="pt",
         ).to(model.device)
         with torch.no_grad():
             gen = model.generate(ids, max_new_tokens=64, do_sample=False)
-        answers.append(tokenizer.decode(gen[0, ids.shape[-1] :], skip_special_tokens=True))
-    tier1 = grade_answers(eval_rows, answers)
+        return tokenizer.decode(gen[0, ids.shape[-1] :], skip_special_tokens=True)
+
+    tier1, answers = generate_tier1(eval_rows, _generate_one)
     tier1["tokens_per_answer"] = (
         sum(len(tokenizer(a)["input_ids"]) for a in answers) / len(answers) if answers else None
     )
     tier1["corpus_id"] = corpus_id
-    (out_dir / "eval_tier1.json").write_text(json.dumps(tier1, indent=2))
     print("[train_job] tier-1: " + json.dumps(tier1))
 
-    api = HfApi()
-    api.create_repo(adapter_repo, repo_type="model", private=True, exist_ok=True)
-    api.upload_folder(
-        folder_path=str(out_dir),
-        repo_id=adapter_repo,
-        path_in_repo="adapter",
-        commit_message=f"adapter from corpus {corpus_id}",
-    )
-    api.create_tag(adapter_repo, tag=corpus_id, tag_message=f"corpus {corpus_id}", exist_ok=True)
+    upload_tier1(api, out_dir, adapter_repo, corpus_id, tier1)
     print(f"[train_job] pushed {adapter_repo} tag {corpus_id}")
     return 0
 
