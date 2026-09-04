@@ -10,9 +10,13 @@ Spec: docs/superpowers/specs/2026-09-04-tetris-placement-distillation-design.md
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import sys
 from collections import Counter
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -252,3 +256,88 @@ def eval_row(record: Record, ply: int = 2) -> dict:
         "teacher": list(record.chosen),
         "ranking": [[rot, col, round(value, 6)] for (rot, col), value in ranked],
     }
+
+
+def corpus_id(records: list[Record]) -> str:
+    """`YYYYMMDD-<12 hex>`: the date plus a hash of the record set, order-independent."""
+    keys = sorted(f"{r.run_id}:{r.turn}:{r.chosen}" for r in records)
+    digest = hashlib.sha256("\n".join(keys).encode()).hexdigest()[:12]
+    return f"{datetime.now(timezone.utc):%Y%m%d}-{digest}"
+
+
+def _write_jsonl(path: Path, rows) -> int:
+    n = 0
+    with open(path, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+            n += 1
+    return n
+
+
+def build_corpus(runs_dir: Path, out_root: Path, ply: int = 2) -> Path:
+    """Read every run under runs_dir into <out_root>/<corpus_id>/ and return that directory."""
+    runs_dir, out_root = Path(runs_dir), Path(out_root)
+    all_records: list[Record] = []
+    excluded: Counter = Counter()
+    n_runs = 0
+    for run_dir in sorted(
+        p for p in runs_dir.iterdir() if p.is_dir() and (p / "summary.json").is_file()
+    ):
+        n_runs += 1
+        records, ex = read_run(run_dir)
+        all_records.extend(records)
+        excluded.update(ex)
+
+    kept, dropped = apply_filters(all_records)
+    excluded.update(dropped)
+    train, valid, stray = split(kept)
+    excluded.update(stray)
+
+    out = out_root / corpus_id(kept)
+    out.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(out / "records.jsonl", (r.to_dict() for r in kept))
+    n_train = _write_jsonl(out / "train.jsonl", (sft_row(r) for r in train))
+    n_valid = _write_jsonl(out / "valid.jsonl", (sft_row(r) for r in valid))
+    _write_jsonl(out / "eval.jsonl", (eval_row(r, ply) for r in valid))
+
+    per_seed: Counter = Counter(str(r.seed) for r in kept)
+    regrets = [r.grade.get("regret_norm", 0.0) for r in kept]
+    top1 = [1.0 if r.grade.get("rank") == 1 else 0.0 for r in kept]
+    stats = {
+        "corpus_id": out.name,
+        "runs": n_runs,
+        "records": len(all_records),
+        "kept": len(kept),
+        "excluded": dict(excluded),
+        "per_seed": dict(sorted(per_seed.items())),
+        "train_rows": n_train,
+        "valid_rows": n_valid,
+        "ply": ply,
+        "teacher": {
+            "mean_regret_norm": round(sum(regrets) / len(regrets), 6) if regrets else None,
+            "top1_rate": round(sum(top1) / len(top1), 6) if top1 else None,
+        },
+    }
+    (out / "stats.json").write_text(json.dumps(stats, indent=2))
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="tetris_corpus", description="runs/ -> placement corpus")
+    ap.add_argument("--runs", default="../tetris/runs")
+    ap.add_argument("--out", default="data/tetris")
+    ap.add_argument("--ply", type=int, default=2)
+    ap.add_argument(
+        "--hf-repo", default="bdougie/tetris-placements", help="dataset repo the upload hint names"
+    )
+    args = ap.parse_args(argv)
+    out = build_corpus(Path(args.runs), Path(args.out), ply=args.ply)
+    stats = json.loads((out / "stats.json").read_text())
+    print(json.dumps(stats, indent=2))
+    print(f"\nwritten: {out}")
+    print(f"upload:  hf upload {args.hf_repo} {out} {out.name} --type dataset --private")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

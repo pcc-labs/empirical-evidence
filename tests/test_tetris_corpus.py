@@ -1,4 +1,5 @@
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from autotune.tetris_corpus import (
     TRAIN_SEED_MIN,
     apply_filters,
     board_array,
+    build_corpus,
+    corpus_id,
     eval_row,
     read_run,
     sft_row,
@@ -202,3 +205,66 @@ def test_eval_row_ranking_is_the_oracle_ranking():
     row = eval_row(r, ply=2)
     expected = rank_placements(board_array(r.board), r.piece, r.next_piece, Genome(), 2)
     assert [(rot, col) for rot, col, _ in row["ranking"]] == [p for p, _ in expected]
+
+
+def _runs_dir(tmp_path):
+    """Two copies of the fixture: one on a train seed that survives, one on eval seed 1."""
+    runs = tmp_path / "runs"
+    for name, seed, topped in (("train-run", 100, False), ("eval-run", 1, False)):
+        dst = runs / name
+        shutil.copytree(FIXTURE, dst)
+        summary = json.loads((dst / "summary.json").read_text())
+        summary["run_id"] = name
+        summary["fitness"]["topped_out"] = topped
+        (dst / "summary.json").write_text(json.dumps(summary))
+        lines = (dst / "events.jsonl").read_text().splitlines()
+        session = json.loads(lines[0])
+        session["data"]["seed"] = seed
+        lines[0] = json.dumps(session)
+        (dst / "events.jsonl").write_text("\n".join(lines) + "\n")
+    return runs
+
+
+def test_build_corpus_writes_every_file_and_the_stats(tmp_path):
+    out = build_corpus(_runs_dir(tmp_path), tmp_path / "data", ply=2)
+    assert out.parent == tmp_path / "data"
+    names = {p.name for p in out.iterdir()}
+    assert names == {"records.jsonl", "train.jsonl", "valid.jsonl", "eval.jsonl", "stats.json"}
+    train = [json.loads(x) for x in (out / "train.jsonl").read_text().splitlines()]
+    valid = [json.loads(x) for x in (out / "valid.jsonl").read_text().splitlines()]
+    ev = [json.loads(x) for x in (out / "eval.jsonl").read_text().splitlines()]
+    # 3 records per run; the veto drops turn 3 in each -> 2 train, 2 valid.
+    assert len(train) == 2 and len(valid) == 2 and len(ev) == 2
+    assert all(len(row["messages"]) == 3 for row in train)
+    assert all("ranking" in row for row in ev)
+    stats = json.loads((out / "stats.json").read_text())
+    assert stats["runs"] == 2
+    assert stats["records"] == 6
+    assert stats["kept"] == 4
+    assert stats["excluded"] == {"late": 2, "top_out_veto": 2}
+    assert stats["per_seed"] == {"1": 2, "100": 2}
+    assert stats["train_rows"] == 2 and stats["valid_rows"] == 2
+    assert 0.0 <= stats["teacher"]["mean_regret_norm"] <= 1.0
+    assert stats["teacher"]["top1_rate"] == 0.5
+
+
+def test_corpus_id_is_dated_and_content_addressed(tmp_path):
+    records, _ = read_run(FIXTURE)
+    a = corpus_id(records)
+    b = corpus_id(list(reversed(records)))
+    assert a == b and len(a.split("-")[1]) == 12 and a[:8].isdigit()
+
+
+def test_build_corpus_skips_a_run_with_no_boards(tmp_path):
+    runs = _runs_dir(tmp_path)
+    old = runs / "old-run"
+    shutil.copytree(FIXTURE, old)
+    lines = []
+    for line in (old / "events.jsonl").read_text().splitlines():
+        e = json.loads(line)
+        e["data"].pop("board", None)
+        lines.append(json.dumps(e))
+    (old / "events.jsonl").write_text("\n".join(lines) + "\n")
+    out = build_corpus(runs, tmp_path / "data")
+    stats = json.loads((out / "stats.json").read_text())
+    assert stats["runs"] == 3 and stats["excluded"]["no_board"] == 3
