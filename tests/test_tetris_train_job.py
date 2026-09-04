@@ -4,9 +4,49 @@ from autotune.tetris_train_job import (
     generate_tier1,
     grade_answers,
     parse_placement,
+    to_prompt_completion,
     upload_adapter,
     upload_tier1,
 )
+
+
+def test_to_prompt_completion_splits_system_and_user_from_the_assistant_turn():
+    """TRL's conversational prompt/completion format masks the prompt tokens from
+    the loss -- without this split SFTTrainer computes loss over the whole
+    sequence (the fixed system prompt and the 18-row board), not the ~25-token
+    placement, which with 366 rows may be the difference between learning
+    something and nothing."""
+    row = {
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+            {"role": "assistant", "content": '{"rotation": 0, "col": 3, "reason": "x"}'},
+        ]
+    }
+    assert to_prompt_completion(row) == {
+        "prompt": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+        ],
+        "completion": [
+            {"role": "assistant", "content": '{"rotation": 0, "col": 3, "reason": "x"}'},
+        ],
+    }
+
+
+def test_to_prompt_completion_does_not_mutate_the_on_disk_row():
+    """The corpus builder's on-disk format is not this job's concern -- the
+    conversion must be read-only over the loaded row."""
+    row = {
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+            {"role": "assistant", "content": "asst"},
+        ]
+    }
+    before = json.dumps(row)
+    to_prompt_completion(row)
+    assert json.dumps(row) == before
 
 
 def test_parse_placement_reads_the_first_json_object():

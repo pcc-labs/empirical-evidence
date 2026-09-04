@@ -95,6 +95,22 @@ def grade_answers(rows: list[dict], answers: list[str]) -> dict:
     }
 
 
+def to_prompt_completion(row: dict) -> dict:
+    """`{"messages": [system, user, assistant]}` -> TRL's conversational
+    prompt/completion format: `{"prompt": messages[:2], "completion": [messages[2]]}`.
+
+    Fed `messages` rows directly, SFTTrainer computes loss over the whole
+    sequence -- the fixed system prompt and the 18-row board, not the ~25-token
+    placement. TRL's prompt/completion format masks the prompt tokens from the
+    loss instead (see `SFTTrainer`'s dataset-format handling in `trl`), so training
+    spends its loss on the placement it is meant to learn. The on-disk corpus
+    format (train.jsonl's `messages` rows) is unchanged; this converts at load
+    time only, and is pure -- no torch import, safe to call locally.
+    """
+    messages = row["messages"]
+    return {"prompt": messages[:2], "completion": [messages[2]]}
+
+
 def _env(name: str, default: str | None = None) -> str:
     value = os.environ.get(name, default)
     if value is None:
@@ -230,7 +246,11 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
             report_to="none",
             save_strategy="no",
         ),
-        train_dataset=Dataset.from_list(train_rows),
+        # prompt/completion, not the raw `messages` rows: TRL masks the prompt
+        # tokens from the loss for this format, so training spends its loss on
+        # the ~25-token placement rather than the fixed system prompt and the
+        # 18-row board that dwarf it in every row.
+        train_dataset=Dataset.from_list([to_prompt_completion(r) for r in train_rows]),
         processing_class=tokenizer,
     )
     trainer.train()
