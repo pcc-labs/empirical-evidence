@@ -292,18 +292,28 @@ def mint(
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - subprocess driver
+    from autotune.tetris_corpus import TRAIN_SEED_MAX, TRAIN_SEED_MIN
+
     ap = argparse.ArgumentParser(
         prog="tetris_rollout", description="mint teacher games under tapes capture"
     )
     ap.add_argument("--tetris-dir", default="../tetris")
-    ap.add_argument("--seeds", nargs="+", type=int, required=True, help="train-pool seeds, >= 100")
+    ap.add_argument(
+        "--seeds", nargs="+", type=int, required=True,
+        help=f"train-pool seeds, {TRAIN_SEED_MIN}-{TRAIN_SEED_MAX}",
+    )
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--max-pieces", type=int, default=DEFAULT_MAX_PIECES)
     ap.add_argument("--project", default=None)
     args = ap.parse_args(argv)
-    low = [s for s in args.seeds if s < 100]
-    if low:
-        ap.error(f"seeds below 100 are the evaluation pool and are never minted: {low}")
+    bad = [s for s in args.seeds if not (TRAIN_SEED_MIN <= s <= TRAIN_SEED_MAX)]
+    if bad:
+        ap.error(
+            f"seeds must be in [{TRAIN_SEED_MIN}, {TRAIN_SEED_MAX}] -- outside that range "
+            f"they are either the evaluation pool or, above {TRAIN_SEED_MAX}, PyBoy's "
+            f"`& 0xFF` DIV mask (pyboy/plugins/base_plugin.py) wraps them back into a seed "
+            f"the eval pool or a lower train seed already owns: {bad}"
+        )
     rows = mint(
         args.seeds, tetris_dir=Path(args.tetris_dir), model=args.model, max_pieces=args.max_pieces,
         project=args.project,

@@ -8,6 +8,7 @@ import pytest
 from autotune.tetris_corpus import (
     EVAL_SEEDS,
     LIVE_DEADLINE_S,
+    TRAIN_SEED_MAX,
     TRAIN_SEED_MIN,
     apply_filters,
     board_array,
@@ -142,6 +143,19 @@ def test_split_refuses_rows_on_the_wrong_side_of_the_seed_line():
     assert excluded == {"seed_out_of_pool": 2}
     assert all(r.seed >= TRAIN_SEED_MIN for r in train)
     assert all(r.seed in EVAL_SEEDS for r in valid)
+
+
+def test_split_excludes_a_wrapped_seed_above_train_seed_max():
+    """PyBoy masks the seed with `& 0xFF` (pyboy/plugins/base_plugin.py), so seed
+    256 is seed 0 and 257-261 replay eval seeds 1-5. A wrapped seed must be
+    excluded, not filed as train just because it is numerically >= TRAIN_SEED_MIN."""
+    train_ok = _records(2, seed=TRAIN_SEED_MAX)
+    wrapped = _records(2, seed=TRAIN_SEED_MAX + 1)
+    train, valid, excluded = split(train_ok + wrapped)
+    assert {r.seed for r in train} == {TRAIN_SEED_MAX}
+    assert valid == []
+    assert excluded == {"seed_wraps": 2}
+    assert TRAIN_SEED_MAX == 255  # seed 255 is train, seed 256 wraps to seed 0
 
 
 def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():

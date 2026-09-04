@@ -4,6 +4,7 @@ import pytest
 
 from autotune.tetris_rollout import (
     bench_command,
+    main,
     mint,
     port_free,
     postgres_up,
@@ -360,3 +361,13 @@ def test_proxy_dsn_refuses_when_unset(monkeypatch):
     monkeypatch.delenv("TAPES_PG_DSN", raising=False)
     with pytest.raises(RuntimeError, match="TAPES_PG_DSN"):
         proxy_dsn()
+
+
+def test_main_refuses_seed_256_because_pyboy_wraps_the_div_register(tmp_path, capsys):
+    """PyBoy masks the seed with `& 0xFF`, so seed 256 replays seed 0 -- one of
+    the eval pool's own seeds -- under a name that looks like it is safely past
+    TRAIN_SEED_MIN. Refuse it before it ever reaches `mint`."""
+    with pytest.raises(SystemExit):
+        main(["--tetris-dir", str(tmp_path), "--seeds", "256"])
+    err = capsys.readouterr().err
+    assert "0xFF" in err or "wrap" in err

@@ -29,6 +29,11 @@ GRADE_KEYS = (
 
 DEATH_SPIRAL = 5
 TRAIN_SEED_MIN = 100
+# PyBoy masks the seed into the timer's DIV register with `& 0xFF`
+# (pyboy/plugins/base_plugin.py:169), so seed 256 is seed 0 and seeds 257-261
+# replay eval seeds 1-5. A seed above this wraps into a value the eval pool (or
+# a lower train seed) already owns and must be excluded, not filed as train.
+TRAIN_SEED_MAX = 255
 EVAL_SEEDS = (1, 2, 3, 4, 5)
 # The served live prompt's level-0 ceiling: tetris_agent.live_agent._deadline_s is
 # max(1.0, rows_to_fall * frames_per_row / 60 - _EXEC_HEADROOM_S), and at level 0
@@ -198,15 +203,21 @@ def apply_filters(
 
 
 def split(records: list[Record]) -> tuple[list[Record], list[Record], Counter]:
-    """Train rows come only from seeds >= TRAIN_SEED_MIN; validation rows only from EVAL_SEEDS."""
+    """Train rows come only from seeds in [TRAIN_SEED_MIN, TRAIN_SEED_MAX]; validation
+    rows only from EVAL_SEEDS. A seed above TRAIN_SEED_MAX has wrapped through PyBoy's
+    `& 0xFF` DIV mask into a seed the eval pool (or a lower train seed) already owns,
+    and is neither -- it is excluded and counted separately from the pool it did not hit.
+    """
     train: list[Record] = []
     valid: list[Record] = []
     excluded: Counter = Counter()
     for r in records:
-        if r.seed >= TRAIN_SEED_MIN:
+        if TRAIN_SEED_MIN <= r.seed <= TRAIN_SEED_MAX:
             train.append(r)
         elif r.seed in EVAL_SEEDS:
             valid.append(r)
+        elif r.seed > TRAIN_SEED_MAX:
+            excluded["seed_wraps"] += 1
         else:
             excluded["seed_out_of_pool"] += 1
     return train, valid, excluded
