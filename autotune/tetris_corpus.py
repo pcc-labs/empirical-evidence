@@ -38,6 +38,13 @@ EVAL_SEEDS = (1, 2, 3, 4, 5)
 # and every level >= 0 the served prompt can produce (a real spawn is usually ~12s).
 LIVE_DEADLINE_S = 13.0
 
+# The teacher arm: runs/ is the dataset of record for every arm tetris_rollout and
+# the benchmark mint into it (heuristic, random, lookahead, other models, other
+# harnesses/efforts), so build_corpus must select on arm, not just seed.
+TEACHER_MODEL = "pi/gemma4:26b"
+TEACHER_HARNESS = "features"
+TEACHER_EFFORT = "off"
+
 
 @dataclass(frozen=True)
 class Record:
@@ -220,7 +227,12 @@ def sft_row(record: Record) -> dict:
     from tetris_agent.pi_policy import PI_JSON_INSTRUCTIONS, PI_PROMPT_SUFFIX
     from tetris_agent.prompts import build_user_prompt, legal_placements, system_prompt_for
 
-    harness = record.harness or "features"
+    if record.harness is None:
+        raise ValueError(
+            f"record {record.run_id}:{record.turn} has no harness — it is not a model "
+            "arm (heuristic, random, ...) and must be excluded before building the corpus"
+        )
+    harness = record.harness
     board = board_array(record.board)
     placements = legal_placements(board, record.piece)
     user = build_user_prompt(
@@ -280,19 +292,39 @@ def _write_jsonl(path: Path, rows) -> int:
     return n
 
 
-def build_corpus(runs_dir: Path, out_root: Path, ply: int = 2) -> Path:
-    """Read every run under runs_dir into <out_root>/<corpus_id>/ and return that directory."""
+def build_corpus(
+    runs_dir: Path,
+    out_root: Path,
+    ply: int = 2,
+    model: str = TEACHER_MODEL,
+    harness: str = TEACHER_HARNESS,
+    effort: str | None = TEACHER_EFFORT,
+) -> Path:
+    """Read every run under runs_dir into <out_root>/<corpus_id>/ and return that directory.
+
+    runs/ is the dataset of record for every arm minted into it, not just the
+    teacher's — only records whose (model, harness, effort) match the selectors
+    are kept; the rest are counted under excluded["wrong_arm"].
+    """
     runs_dir, out_root = Path(runs_dir), Path(out_root)
     all_records: list[Record] = []
     excluded: Counter = Counter()
+    per_arm: Counter = Counter()
     n_runs = 0
+    n_read = 0
     for run_dir in sorted(
         p for p in runs_dir.iterdir() if p.is_dir() and (p / "summary.json").is_file()
     ):
         n_runs += 1
         records, ex = read_run(run_dir)
-        all_records.extend(records)
         excluded.update(ex)
+        for r in records:
+            n_read += 1
+            per_arm[r.arm] += 1
+            if (r.model, r.harness, r.effort) == (model, harness, effort):
+                all_records.append(r)
+            else:
+                excluded["wrong_arm"] += 1
 
     kept, dropped = apply_filters(all_records)
     excluded.update(dropped)
@@ -304,6 +336,12 @@ def build_corpus(runs_dir: Path, out_root: Path, ply: int = 2) -> Path:
     _write_jsonl(out / "records.jsonl", (r.to_dict() for r in kept))
     n_train = _write_jsonl(out / "train.jsonl", (sft_row(r) for r in train))
     n_valid = _write_jsonl(out / "valid.jsonl", (sft_row(r) for r in valid))
+    if n_train == 0:
+        raise RuntimeError(
+            f"zero train rows from {n_runs} runs under {runs_dir} (kept {len(kept)} of "
+            f"{n_read} records) — excluded: {dict(excluded)}. Refusing to mint a corpus "
+            "id for nothing."
+        )
     _write_jsonl(out / "eval.jsonl", (eval_row(r, ply) for r in valid))
 
     per_seed: Counter = Counter(str(r.seed) for r in kept)
@@ -312,10 +350,11 @@ def build_corpus(runs_dir: Path, out_root: Path, ply: int = 2) -> Path:
     stats = {
         "corpus_id": out.name,
         "runs": n_runs,
-        "records": len(all_records),
+        "records": n_read,
         "kept": len(kept),
         "excluded": dict(excluded),
         "per_seed": dict(sorted(per_seed.items())),
+        "per_arm": dict(sorted(per_arm.items())),
         "train_rows": n_train,
         "valid_rows": n_valid,
         "ply": ply,
@@ -333,11 +372,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", default="../tetris/runs")
     ap.add_argument("--out", default="data/tetris")
     ap.add_argument("--ply", type=int, default=2)
+    ap.add_argument("--model", default=TEACHER_MODEL, help="only records from this model")
+    ap.add_argument("--harness", default=TEACHER_HARNESS, help="only records from this harness")
+    ap.add_argument("--effort", default=TEACHER_EFFORT, help="only records from this effort")
     ap.add_argument(
         "--hf-repo", default="bdougie/tetris-placements", help="dataset repo the upload hint names"
     )
     args = ap.parse_args(argv)
-    out = build_corpus(Path(args.runs), Path(args.out), ply=args.ply)
+    out = build_corpus(
+        Path(args.runs), Path(args.out), ply=args.ply,
+        model=args.model, harness=args.harness, effort=args.effort,
+    )
     stats = json.loads((out / "stats.json").read_text())
     print(json.dumps(stats, indent=2))
     print(f"\nwritten: {out}")

@@ -3,6 +3,8 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from autotune.tetris_corpus import (
     EVAL_SEEDS,
     LIVE_DEADLINE_S,
@@ -183,6 +185,15 @@ def test_live_deadline_s_never_exceeds_the_served_prompts_level0_ceiling():
     assert LIVE_DEADLINE_S <= ceiling
 
 
+def test_sft_row_raises_on_a_harness_less_record():
+    """A harness of None means a non-model arm (heuristic, random, ...); coercing
+    it to "features" would silently render a real prompt for a control arm."""
+    r, *_ = read_run(FIXTURE)[0]
+    r = replace(r, harness=None)
+    with pytest.raises(ValueError, match="harness"):
+        sft_row(r)
+
+
 def test_sft_assistant_turn_is_the_terse_placement_json():
     r, *_ = read_run(FIXTURE)[0]
     assistant = sft_row(r)["messages"][2]["content"]
@@ -261,9 +272,87 @@ def test_build_corpus_writes_every_file_and_the_stats(tmp_path):
     assert stats["kept"] == 4
     assert stats["excluded"] == {"late": 2, "top_out_veto": 2}
     assert stats["per_seed"] == {"1": 2, "100": 2}
+    assert stats["per_arm"] == {"pi/gemma4:26b/features/off+fixed": 6}
     assert stats["train_rows"] == 2 and stats["valid_rows"] == 2
     assert 0.0 <= stats["teacher"]["mean_regret_norm"] <= 1.0
     assert stats["teacher"]["top1_rate"] == 0.5
+
+
+def _relabel_arm(run_dir, *, run_id, seed, policy, arm, model, harness, effort):
+    """Point a fixture copy at a different arm/model/harness/effort, so a runs/
+    directory can hold both the teacher's runs and a control arm's on one seed."""
+    summary = json.loads((run_dir / "summary.json").read_text())
+    summary["run_id"] = run_id
+    summary["fitness"]["topped_out"] = False
+    (run_dir / "summary.json").write_text(json.dumps(summary))
+    lines = (run_dir / "events.jsonl").read_text().splitlines()
+    session = json.loads(lines[0])
+    session["data"] = {
+        "phase": "start", "policy": policy, "arm": arm, "model": model,
+        "harness": harness, "effort": effort, "mode": "paused", "seed": seed,
+    }
+    lines[0] = json.dumps(session)
+    (run_dir / "events.jsonl").write_text("\n".join(lines) + "\n")
+
+
+def test_build_corpus_excludes_every_arm_but_the_teacher(tmp_path):
+    """runs/ is the dataset of record for every arm tetris_rollout mints into --
+    build_corpus must not silently fold a control arm's placements into training."""
+    runs = tmp_path / "runs"
+    teacher = runs / "teacher-run"
+    shutil.copytree(FIXTURE, teacher)
+    _relabel_arm(
+        teacher, run_id="teacher-run", seed=100, policy="pi/gemma4:26b/features/off",
+        arm="pi/gemma4:26b/features/off+fixed", model="pi/gemma4:26b",
+        harness="features", effort="off",
+    )
+    control = runs / "random-run"
+    shutil.copytree(FIXTURE, control)
+    _relabel_arm(
+        control, run_id="random-run", seed=100, policy="random", arm="random",
+        model="random", harness=None, effort=None,
+    )
+
+    out = build_corpus(runs, tmp_path / "data")
+    train = [json.loads(x) for x in (out / "train.jsonl").read_text().splitlines()]
+    records = [json.loads(x) for x in (out / "records.jsonl").read_text().splitlines()]
+    stats = json.loads((out / "stats.json").read_text())
+
+    assert {r["run_id"] for r in records} == {"teacher-run"}
+    assert len(train) == 2  # 3 teacher records, minus the top-out-veto drop
+    assert stats["excluded"]["wrong_arm"] == 3  # every record from the random run
+    assert stats["per_arm"] == {"pi/gemma4:26b/features/off+fixed": 3, "random": 3}
+
+
+def test_build_corpus_selectors_can_target_a_different_arm(tmp_path):
+    runs = tmp_path / "runs"
+    control = runs / "random-run"
+    shutil.copytree(FIXTURE, control)
+    _relabel_arm(
+        control, run_id="random-run", seed=100, policy="random", arm="random",
+        model="random", harness="features", effort=None,
+    )
+    out = build_corpus(runs, tmp_path / "data", model="random", harness="features", effort=None)
+    records = [json.loads(x) for x in (out / "records.jsonl").read_text().splitlines()]
+    assert {r["run_id"] for r in records} == {"random-run"}
+    stats = json.loads((out / "stats.json").read_text())
+    assert "wrong_arm" not in stats["excluded"]
+
+
+def test_build_corpus_raises_when_it_would_mint_a_zero_row_corpus(tmp_path):
+    """A zero-row corpus still wrote all five files and a corpus id, and printed
+    the hf upload command, in a real 17-run runs/ that filtered to nothing. That
+    is a meaningless corpus id and a job that dies on a paid GPU at
+    train.jsonl[0] -- raise here instead, naming why."""
+    runs = tmp_path / "runs"
+    control = runs / "random-run"
+    shutil.copytree(FIXTURE, control)
+    _relabel_arm(
+        control, run_id="random-run", seed=100, policy="random", arm="random",
+        model="random", harness=None, effort=None,
+    )
+    with pytest.raises(RuntimeError, match="wrong_arm"):
+        build_corpus(runs, tmp_path / "data")
 
 
 def test_corpus_id_is_dated_and_content_addressed(tmp_path):
