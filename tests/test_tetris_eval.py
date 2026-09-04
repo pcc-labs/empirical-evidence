@@ -59,6 +59,42 @@ def test_runs_for_selects_by_model_prefix():
     assert len(runs_for(result, "pi/gemma4-e4b-tetris:x")) == 1
 
 
+def test_runs_for_matches_the_full_arm_prefix_not_just_the_model():
+    """A plain model-prefix match pools every effort of a model into one sample:
+    `pi/gemma4:latest/features/off+live+fixed` and `.../features/low+live+fixed`
+    both start with `pi/gemma4:latest/` -- a standard `--efforts off low` benchmark
+    file would compute the baseline across efforts instead of just `off`."""
+    off_runs = [_run(BASE, s, 180, 30, 34.0, 0) for s in (1, 2, 3)]
+    low_arm = "pi/gemma4:latest/features/low+live+fixed"
+    low_runs = [_run(low_arm, s, 900, 30, 90.0, 0) for s in (1, 2, 3)]
+    result = {"runs": off_runs + low_runs}
+    selected = runs_for(result, "pi/gemma4:latest", harness="features", effort="off")
+    assert selected == off_runs
+    assert all(r["arm"] == BASE for r in selected)
+
+
+def test_gate_rejects_duplicate_seeds_within_one_arm():
+    """The seed check used sets, so two rows for the same seed silently
+    collapsed instead of being caught -- reject the duplicate by name."""
+    tuned = [_run(TUNED, s, 380, 30, 34.0, 0) for s in (1, 2, 3)] + [
+        _run(TUNED, 3, 380, 30, 34.0, 0)  # seed 3 twice
+    ]
+    base = [_run(BASE, s, 180, 30, 34.0, 0) for s in (1, 2, 3)]
+    r = gate(tuned, base)
+    assert not r.passed
+    assert any("duplicate" in x and "3" in x for x in r.reasons)
+
+
+def test_gate_fails_when_a_base_run_carries_no_effort_tag():
+    """The effort check only inspected tuned runs -- a base run that ran
+    effort-free (same failure mode as an unlisted tuned tag) went uncaught."""
+    tuned = [_run(TUNED, s, 380, 30, 34.0, 0, effort="off") for s in (1, 2, 3, 4, 5)]
+    base = [_run(BASE, s, 180, 30, 34.0, 0, effort=None) for s in (1, 2, 3, 4, 5)]
+    r = gate(tuned, base)
+    assert not r.passed
+    assert any("effort" in x and BASE in x for x in r.reasons)
+
+
 def test_gate_fails_when_a_tuned_run_carries_no_effort_tag():
     """An unlisted tuned tag makes tetris pricing.spec return supports_effort=False,
     so model_policy sends no --thinking and the run comes back effort-free -- the

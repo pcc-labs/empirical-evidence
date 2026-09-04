@@ -46,13 +46,32 @@ def _seed(run: dict) -> object:
     return run.get("seed")
 
 
-def runs_for(result: dict, model: str) -> list[dict]:
-    prefix = f"{model}/"
+def runs_for(
+    result: dict, model: str, harness: str = "features", effort: str = "off"
+) -> list[dict]:
+    """Runs for one arm: `{model}/{harness}/{effort}+...`.
+
+    A model-only prefix match pools every effort of a model into one sample --
+    `pi/gemma4:latest/features/off+live+fixed` and `.../features/low+live+fixed`
+    both start with `pi/gemma4:latest/`. Match the full arm prefix instead.
+    """
+    prefix = f"{model}/{harness}/{effort}+"
     return [
         r
         for r in result.get("runs", [])
         if str(r.get("arm", "")).startswith(prefix) and not r.get("error")
     ]
+
+
+def _duplicate_seeds(runs: list[dict]) -> list:
+    seen: set = set()
+    dupes: list = []
+    for r in runs:
+        s = _seed(r)
+        if s in seen and s not in dupes:
+            dupes.append(s)
+        seen.add(s)
+    return dupes
 
 
 @dataclass
@@ -74,6 +93,17 @@ def gate(tuned_runs: list[dict], base_runs: list[dict]) -> GateResult:
     if not tuned_runs or not base_runs:
         return GateResult(False, ["no runs for tuned or base arm"])
 
+    # A duplicate seed row within one arm must be rejected, not silently
+    # collapsed by the set-based seed check below.
+    tuned_dupes, base_dupes = _duplicate_seeds(tuned_runs), _duplicate_seeds(base_runs)
+    if tuned_dupes or base_dupes:
+        reasons = []
+        if tuned_dupes:
+            reasons.append(f"tuned arm has duplicate seed row(s): {sorted(tuned_dupes, key=str)}")
+        if base_dupes:
+            reasons.append(f"base arm has duplicate seed row(s): {sorted(base_dupes, key=str)}")
+        return GateResult(False, reasons)
+
     # The median rule exists because the same weights and seed have scored 225
     # and 530 on different runs -- it must not get decided on a lopsided subset.
     tuned_seeds, base_seeds = {_seed(x) for x in tuned_runs}, {_seed(x) for x in base_runs}
@@ -87,16 +117,20 @@ def gate(tuned_runs: list[dict], base_runs: list[dict]) -> GateResult:
             False, [f"only {len(tuned_seeds)} seed(s) — need at least {MIN_SEEDS}"]
         )
 
-    # An unlisted tuned tag makes tetris pricing.spec return supports_effort=False,
-    # so the run comes back with thinking on (no --thinking sent) and is not
-    # comparable to the effort-off baseline. fitness.policy.effort == "off" is the
-    # tell that the arm actually ran the way its name (.../off+live+fixed) claims.
-    bad_effort = sorted({str(x.get("arm", "")) for x in tuned_runs if _effort(x) != "off"})
+    # An unlisted tag makes tetris pricing.spec return supports_effort=False, so
+    # the run comes back with thinking on (no --thinking sent) and is not
+    # comparable to the effort-off arm it's being measured against.
+    # fitness.policy.effort == "off" is the tell that an arm actually ran the way
+    # its name (.../off+live+fixed) claims -- checked on both tuned and base runs,
+    # since either one can silently run effort-free.
+    bad_effort = sorted(
+        {str(x.get("arm", "")) for x in tuned_runs + base_runs if _effort(x) != "off"}
+    )
     if bad_effort:
         return GateResult(
             False,
             [
-                f"tuned arm ran effort-free — add the tag to tetris pricing.MODELS: {arm}"
+                f"arm ran effort-free — add the tag to tetris pricing.MODELS: {arm}"
                 for arm in bad_effort
             ],
         )
@@ -133,9 +167,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--tuned", required=True, help="pi/<tuned tag>")
     ap.add_argument("--base", default="pi/gemma4:latest")
+    ap.add_argument("--harness", default="features")
+    ap.add_argument("--effort", default="off")
     args = ap.parse_args(argv)
     result = json.loads(Path(args.results).read_text())
-    verdict = gate(runs_for(result, args.tuned), runs_for(result, args.base))
+    verdict = gate(
+        runs_for(result, args.tuned, harness=args.harness, effort=args.effort),
+        runs_for(result, args.base, harness=args.harness, effort=args.effort),
+    )
     print(json.dumps(verdict.to_dict(), indent=2))
     print("PASS" if verdict.passed else "FAIL: " + "; ".join(verdict.reasons))
     return 0 if verdict.passed else 1
