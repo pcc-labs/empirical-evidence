@@ -15,6 +15,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 from tetris_agent.quality import TOP_OUT_VALUE  # one source of truth for the lethal sentinel
 
 GRADE_KEYS = (
@@ -25,6 +26,7 @@ GRADE_KEYS = (
 DEATH_SPIRAL = 5
 TRAIN_SEED_MIN = 100
 EVAL_SEEDS = (1, 2, 3, 4, 5)
+LIVE_DEADLINE_S = 15.0
 
 
 @dataclass(frozen=True)
@@ -191,3 +193,37 @@ def split(records: list[Record]) -> tuple[list[Record], list[Record], Counter]:
         else:
             excluded["seed_out_of_pool"] += 1
     return train, valid, excluded
+
+
+def board_array(rows: list[str]) -> np.ndarray:
+    return np.array([[ch == "#" for ch in row] for row in rows], dtype=bool)
+
+
+def sft_row(record: Record) -> dict:
+    """`{"messages": [system, user, assistant]}` — the format train_sft.py reads.
+
+    Rendered through tetris's own prompt code and the pi arm's exact suffixes, so
+    the training input is byte-identical to what the served student receives.
+    The deadline line is the level-0 fall time even for rows minted paused: the
+    deployed prompt is the live one.
+    """
+    from tetris_agent.pi_policy import PI_JSON_INSTRUCTIONS, PI_PROMPT_SUFFIX
+    from tetris_agent.prompts import build_user_prompt, legal_placements, system_prompt_for
+
+    harness = record.harness or "features"
+    board = board_array(record.board)
+    placements = legal_placements(board, record.piece)
+    user = build_user_prompt(
+        harness, board, record.piece, record.next_piece, placements, record.turn,
+        deadline_s=LIVE_DEADLINE_S,
+    )
+    assistant = json.dumps(
+        {"rotation": record.chosen[0], "col": record.chosen[1], "reason": record.reason}
+    )
+    return {
+        "messages": [
+            {"role": "system", "content": system_prompt_for(harness) + PI_JSON_INSTRUCTIONS},
+            {"role": "user", "content": user + PI_PROMPT_SUFFIX},
+            {"role": "assistant", "content": assistant},
+        ]
+    }

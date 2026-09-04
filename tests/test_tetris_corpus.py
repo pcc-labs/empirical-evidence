@@ -1,11 +1,15 @@
+import json
 from dataclasses import replace
 from pathlib import Path
 
 from autotune.tetris_corpus import (
     EVAL_SEEDS,
+    LIVE_DEADLINE_S,
     TRAIN_SEED_MIN,
     apply_filters,
+    board_array,
     read_run,
+    sft_row,
     split,
 )
 
@@ -132,3 +136,41 @@ def test_split_refuses_rows_on_the_wrong_side_of_the_seed_line():
     assert excluded == {"seed_out_of_pool": 2}
     assert all(r.seed >= TRAIN_SEED_MIN for r in train)
     assert all(r.seed in EVAL_SEEDS for r in valid)
+
+
+def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():
+    from tetris_agent.pi_policy import PI_JSON_INSTRUCTIONS, PI_PROMPT_SUFFIX
+    from tetris_agent.prompts import build_user_prompt, legal_placements, system_prompt_for
+
+    r, *_ = read_run(FIXTURE)[0]
+    row = sft_row(r)
+    system, user, assistant = row["messages"]
+    board = board_array(r.board)
+    expected_user = (
+        build_user_prompt(
+            "features", board, r.piece, r.next_piece,
+            legal_placements(board, r.piece), r.turn,
+            deadline_s=LIVE_DEADLINE_S,
+        )
+        + PI_PROMPT_SUFFIX
+    )
+    assert system == {
+        "role": "system", "content": system_prompt_for("features") + PI_JSON_INSTRUCTIONS,
+    }
+    assert user == {"role": "user", "content": expected_user}
+    assert assistant["role"] == "assistant"
+
+
+def test_sft_assistant_turn_is_the_terse_placement_json():
+    r, *_ = read_run(FIXTURE)[0]
+    assistant = sft_row(r)["messages"][2]["content"]
+    parsed = json.loads(assistant)
+    assert parsed == {"rotation": r.chosen[0], "col": r.chosen[1], "reason": r.reason}
+    assert assistant == '{"rotation": 0, "col": 3, "reason": "Flat on the floor."}'
+
+
+def test_board_array_round_trips():
+    r, *_ = read_run(FIXTURE)[0]
+    arr = board_array(r.board)
+    assert arr.shape == (18, 10) and arr.dtype == bool
+    assert ["".join("#" if c else "." for c in row) for row in arr] == r.board
