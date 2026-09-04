@@ -28,7 +28,13 @@ TAG="gemma4-e4b-tetris:${CORPUS_ID}"
 QUANT="${OUT_DIR}/gemma-4-E4B-tetris-${CORPUS_ID}-Q4_K_M.gguf"
 # Everything is on disk by the time this runs; an offline Hub means a stale or
 # invalid HF_TOKEN in the shell cannot fail a public-model load with a 401.
-export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# UPLOAD=1 (push adapter + GGUF to the Hub repos) needs the Hub reachable.
+if [[ "${UPLOAD:-0}" == "1" ]]; then
+  export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+else
+  export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+fi
+export UPLOAD="${UPLOAD:-0}"
 
 want() { [[ "$STAGE" == "all" || "$STAGE" == "$1" ]]; }
 
