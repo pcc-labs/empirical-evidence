@@ -30,24 +30,30 @@ import re
 import sys
 from pathlib import Path
 
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+_JSON_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 
 def parse_placement(text: str) -> tuple[int, int] | None:
-    """(rotation, col) from the first {...} in text, or None."""
-    m = _JSON_RE.search(text or "")
-    if not m:
-        return None
-    try:
-        d = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
-    rot, col = d.get("rotation"), d.get("col")
-    if isinstance(rot, bool) or isinstance(col, bool):
-        return None
-    if not isinstance(rot, int) or not isinstance(col, int):
-        return None
-    return rot, col
+    """(rotation, col) from the first {...} candidate in text that parses with
+    both keys as ints.
+
+    Scans every brace-delimited candidate rather than taking the first match:
+    a non-greedy first-match regex lets a `{` earlier in the text -- a thinking
+    preamble, a nested brace -- match a truncated fragment and score a spurious
+    parse failure.
+    """
+    for m in _JSON_RE.finditer(text or ""):
+        try:
+            d = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        rot, col = d.get("rotation"), d.get("col")
+        if isinstance(rot, bool) or isinstance(col, bool):
+            continue
+        if not isinstance(rot, int) or not isinstance(col, int):
+            continue
+        return rot, col
+    return None
 
 
 def grade_answers(rows: list[dict], answers: list[str]) -> dict:
