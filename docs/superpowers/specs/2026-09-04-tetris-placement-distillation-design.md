@@ -261,11 +261,14 @@ Thin adapters over `records.jsonl`; v1 emits only the first.
 
 - `system`: `prompts.system_prompt_for("features")`, verbatim from tetris.
 - `user`: `prompts.build_user_prompt("features", board, piece, next_piece, placements, turn,
-  deadline_s=15.0)`, called from the tetris package, never reimplemented. Training input is
-  byte-identical to inference input, and a prompt change regenerates the corpus instead of
-  silently rotting it. `deadline_s=15.0` is the level-0 fall time — the live prompt shape,
-  even though the rows were minted paused. Every row renders the same fixed value; the event
-  carries no per-decision deadline (see the contract).
+  deadline_s=live_deadline_s(piece))`, called from the tetris package, never reimplemented.
+  Training input is byte-identical to inference input, and a prompt change regenerates the
+  corpus instead of silently rotting it. `live_deadline_s(piece)` is the level-0 fall time for
+  that piece's own spawn shape — the live prompt shape, even though the rows were minted
+  paused — derived per piece from tetris's `ROWS`, `Emulator._GRAVITY_RELOADS[0]`,
+  `live_agent._EXEC_HEADROOM_S`, and the spawn's bottom row (`pieces._SPAWN`): "about 13
+  seconds" for the flat-spawning I piece, "about 12" for every other piece. The event carries
+  no per-decision deadline (see the contract).
 - `assistant`: `{"rotation": r, "col": c, "reason": "<teacher's sentence>"}` — the terse
   target. Tokens per decision is a gated number (below); a corpus that taught long answers
   would fail that gate.

@@ -7,7 +7,6 @@ import pytest
 
 from autotune.tetris_corpus import (
     EVAL_SEEDS,
-    LIVE_DEADLINE_S,
     TRAIN_SEED_MAX,
     TRAIN_SEED_MIN,
     apply_filters,
@@ -15,6 +14,7 @@ from autotune.tetris_corpus import (
     build_corpus,
     corpus_id,
     eval_row,
+    live_deadline_s,
     read_run,
     sft_row,
     split,
@@ -159,20 +159,25 @@ def test_split_excludes_a_wrapped_seed_above_train_seed_max():
 
 
 def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():
+    """The fixture's piece is "O", which spawns two rows tall (bottom_row 1, see
+    tetris's pieces._SPAWN) -- only the I piece spawns flat. A literal deadline
+    computed independently of live_deadline_s, not the function under test: this
+    must fail if someone breaks what the function renders to for this piece."""
     from tetris_agent.pi_policy import PI_JSON_INSTRUCTIONS, PI_PROMPT_SUFFIX
     from tetris_agent.prompts import build_user_prompt, legal_placements, system_prompt_for
 
-    r, *_ = read_run(FIXTURE)[0]
+    r = read_run(FIXTURE)[0][1]  # turn 2, piece "O" -- not the flat-spawning "I" of turn 1
+    assert r.piece == "O"
     row = sft_row(r)
     system, user, assistant = row["messages"]
     board = board_array(r.board)
-    # A literal deadline, not LIVE_DEADLINE_S piped through both sides: this must
-    # fail if someone edits the constant without editing what it renders to.
+    # O's spawn bottom_row is 1: rows_to_fall = 17 - 1 = 16, frames_per_row = 53.
+    literal_deadline_s = 16 * 53 / 60 - 2.0
     expected_user = (
         build_user_prompt(
             "features", board, r.piece, r.next_piece,
             legal_placements(board, r.piece), r.turn,
-            deadline_s=13.0,
+            deadline_s=literal_deadline_s,
         )
         + PI_PROMPT_SUFFIX
     )
@@ -183,8 +188,21 @@ def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():
     assert assistant["role"] == "assistant"
 
 
+def test_live_deadline_s_renders_13_for_the_only_flat_spawning_piece():
+    """Only the I piece spawns flat (bottom_row 0, see tetris's pieces._SPAWN):
+    17 * 53/60 - 2.0 = 13.02, "about 13 seconds"."""
+    assert f"{live_deadline_s('I'):.0f}" == "13"
+
+
+def test_live_deadline_s_renders_12_for_every_two_row_spawning_piece():
+    """L, J, O, Z, S, T all spawn two rows tall (bottom_row 1):
+    16 * 53/60 - 2.0 = 12.13, "about 12 seconds" -- not 13."""
+    for piece in "LJOZST":
+        assert f"{live_deadline_s(piece):.0f}" == "12", piece
+
+
 def test_live_deadline_s_never_exceeds_the_served_prompts_level0_ceiling():
-    """`LIVE_DEADLINE_S` must be a value the live prompt can actually produce.
+    """Every piece's deadline must be a value the live prompt can actually produce.
 
     tetris's live_agent._deadline_s tops out, at level 0, at
     (ROWS - 1) * (_GRAVITY_RELOADS[0] + 1) / 60 - _EXEC_HEADROOM_S. A gravity or
@@ -196,7 +214,7 @@ def test_live_deadline_s_never_exceeds_the_served_prompts_level0_ceiling():
     from tetris_agent.live_agent import _EXEC_HEADROOM_S
 
     ceiling = (ROWS - 1) * (Emulator._GRAVITY_RELOADS[0] + 1) / 60 - _EXEC_HEADROOM_S
-    assert LIVE_DEADLINE_S <= ceiling
+    assert all(live_deadline_s(p) <= ceiling for p in "LJIOZST")
 
 
 def test_sft_row_raises_on_a_harness_less_record():

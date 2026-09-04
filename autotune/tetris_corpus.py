@@ -35,13 +35,6 @@ TRAIN_SEED_MIN = 100
 # a lower train seed) already owns and must be excluded, not filed as train.
 TRAIN_SEED_MAX = 255
 EVAL_SEEDS = (1, 2, 3, 4, 5)
-# The served live prompt's level-0 ceiling: tetris_agent.live_agent._deadline_s is
-# max(1.0, rows_to_fall * frames_per_row / 60 - _EXEC_HEADROOM_S), and at level 0
-# with Emulator._GRAVITY_RELOADS[0] == 52, ROWS == 18, _EXEC_HEADROOM_S == 2.0, the
-# maximum (a piece spawning at the very top, rows_to_fall == ROWS - 1 == 17) is
-# 17 * 53 / 60 - 2.0 = 13.017s. 13.0 stays under that ceiling for every board depth
-# and every level >= 0 the served prompt can produce (a real spawn is usually ~12s).
-LIVE_DEADLINE_S = 13.0
 
 # The teacher arm: runs/ is the dataset of record for every arm tetris_rollout and
 # the benchmark mint into it (heuristic, random, lookahead, other models, other
@@ -227,13 +220,35 @@ def board_array(rows: list[str]) -> np.ndarray:
     return np.array([[ch == "#" for ch in row] for row in rows], dtype=bool)
 
 
+def live_deadline_s(piece: str) -> float:
+    """The served live prompt's level-0 deadline for `piece`, from tetris's own constants.
+
+    tetris_agent.live_agent._deadline_s is max(1.0, rows_to_fall * frames_per_row / 60 -
+    _EXEC_HEADROOM_S), where rows_to_fall == (ROWS - 1) - bottom_row and, at level 0,
+    frames_per_row == Emulator._GRAVITY_RELOADS[0] + 1 == 53. Only the I piece spawns
+    flat (bottom_row 0, see pieces._SPAWN) -> 17 * 53/60 - 2.0 = "about 13 seconds";
+    every other piece spawns two rows tall (bottom_row 1) -> 16 * 53/60 - 2.0 =
+    "about 12 seconds". Level 0 only -- rows minted paused are still trained against
+    the level-0 deadline the deployed live prompt actually shows.
+    """
+    from tetris_agent.board import ROWS
+    from tetris_agent.emulator import Emulator
+    from tetris_agent.live_agent import _EXEC_HEADROOM_S
+    from tetris_agent.pieces import _SPAWN
+
+    bottom_row = max(r for r, _ in _SPAWN[piece])
+    frames_per_row = Emulator._GRAVITY_RELOADS[0] + 1
+    rows_to_fall = (ROWS - 1) - bottom_row
+    return max(1.0, rows_to_fall * frames_per_row / 60 - _EXEC_HEADROOM_S)
+
+
 def sft_row(record: Record) -> dict:
     """`{"messages": [system, user, assistant]}` — the format train_sft.py reads.
 
     Rendered through tetris's own prompt code and the pi arm's exact suffixes, so
     the training input is byte-identical to what the served student receives.
-    The deadline line is the level-0 fall time even for rows minted paused: the
-    deployed prompt is the live one.
+    The deadline line is the level-0 fall time for the record's own piece, even
+    for rows minted paused: the deployed prompt is the live one.
     """
     from tetris_agent.pi_policy import PI_JSON_INSTRUCTIONS, PI_PROMPT_SUFFIX
     from tetris_agent.prompts import build_user_prompt, legal_placements, system_prompt_for
@@ -248,7 +263,7 @@ def sft_row(record: Record) -> dict:
     placements = legal_placements(board, record.piece)
     user = build_user_prompt(
         harness, board, record.piece, record.next_piece, placements, record.turn,
-        deadline_s=LIVE_DEADLINE_S,
+        deadline_s=live_deadline_s(record.piece),
     )
     assistant = json.dumps(
         {"rotation": record.chosen[0], "col": record.chosen[1], "reason": record.reason}
