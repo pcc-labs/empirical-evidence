@@ -111,6 +111,13 @@ on the Yellow-labelled ground-truth prompts; the retrained model scores 75%, whi
 on held-out Red — see [docs/game-agnostic-retrain.md](docs/game-agnostic-retrain.md) for the
 corpus, the MLX learning-rate fix, convergence, and full benchmarks.
 
+**Tetris placement distillation** is the second game: a small local student
+(gemma4 E4B) trained on a larger local teacher's placements, graded against a
+lookahead oracle, trained on the RTX 5090. Runbook and results live under
+[docs/tetris/](docs/tetris/) — [local-training.md](docs/tetris/local-training.md)
+for the pipeline, [distillation-findings.md](docs/tetris/distillation-findings.md)
+for what run 1 showed.
+
 ## Layout
 | File | Role |
 |---|---|

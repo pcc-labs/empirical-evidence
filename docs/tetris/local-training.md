@@ -1,7 +1,7 @@
 # Tetris placement distillation, trained on the box
 
 The HF Jobs pipeline in the design spec
-(`superpowers/specs/2026-09-04-tetris-placement-distillation-design.md`) runs
+([the design spec](../superpowers/specs/2026-09-04-tetris-placement-distillation-design.md)) runs
 unchanged on the RTX 5090. Same scripts, four env knobs, no Hub round trip.
 
 ## What has to be true first
@@ -62,7 +62,7 @@ pushes the local adapter and GGUF to the same repos, for a box that wants the
 Hub as its archive.
 
 Run 1's results, and what they do and do not show, are in
-[tetris-distillation-findings.md](tetris-distillation-findings.md).
+[distillation-findings.md](distillation-findings.md).
 
 ## What was verified on the box (2026-09-04)
 

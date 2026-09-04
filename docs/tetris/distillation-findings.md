@@ -1,7 +1,7 @@
 # Tetris placement distillation, run 1: the pipeline works, the corpus does not yet
 
 First end-to-end execution of the design in
-`superpowers/specs/2026-09-04-tetris-placement-distillation-design.md`, trained
+[the design spec](../superpowers/specs/2026-09-04-tetris-placement-distillation-design.md), trained
 locally on the RTX 5090 rather than on HF Jobs. Every stage has now executed on
 real data. The short answer on the question the project exists to ask — does
 training a 9.6 GB student on a 19 GB teacher's placements make it play better
