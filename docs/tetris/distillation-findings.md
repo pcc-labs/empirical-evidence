@@ -95,6 +95,48 @@ arm loses on the live gate, package the *untuned* base through the same
 converter and race that against `gemma4:latest` first — otherwise a packaging
 difference will be misread as a training result.
 
+## Prognosis: train harder, or train differently?
+
+More of the same buys a little; a different objective buys more; and the data
+for the different objective already exists.
+
+**Why "train harder" on this recipe has a low ceiling.** Supervised fine-tuning
+on the teacher's choices can only converge toward the teacher, and on these
+boards the teacher is 4 top-1 rows ahead of the untuned student. That is the
+entire prize. Longer training on 366 rows would overfit rather than help — token
+accuracy is already 0.90. The bigger corpus is still worth one run: it costs
+nothing but five hours and tests the imitation hypothesis cleanly. Expect it to
+pull tier-1 toward 0.41 and the live score partway from 330 toward 530,
+probably not all the way.
+
+**The gap that matters is not in the tier-1 table.** Per decision, untuned E4B
+looks close to the teacher. Live, it loses 330 to 530. The difference is
+distribution shift: the eval boards are boards the teacher created for itself,
+while the student plays on boards its own earlier mistakes created, and small
+per-decision regret compounds over 60 pieces. Tier-1 on teacher boards will
+always understate that. A corpus of the student's own boards, labelled by the
+oracle, closes it — that is the design's round 2 and it should move up.
+
+**A different objective is the real lever, and it is cheap.** In rising order
+of cost:
+
+1. **Preference pairs from the oracle ranking.** Every record already carries
+   the full ranked list of legal placements. Pair the best against a bad one
+   and train with DPO. The student learns to rank placements rather than copy
+   one label, and the ceiling becomes the oracle instead of the teacher. Same
+   corpus, one new view, one TRL trainer swap.
+2. **On-policy data.** Roll the student out, label its boards with the oracle,
+   retrain. Fixes the compounding directly.
+3. **GRPO with the oracle as reward.** Sample several placements per board,
+   score each with the two-ply oracle, reinforce the good ones. No teacher at
+   all. Feasible on the 5090 with LoRA on an 8 B model, slower per step.
+
+**One caution about what would be optimised.** Tier-1 measures agreement with
+a two-ply heuristic that the *winning* teacher disagrees with 59% of the time.
+It is a weak proxy for the live race score. Whichever objective is chosen, the
+live gate on held-out seeds is the number that counts; the oracle is a reward
+signal to be validated against it, not ground truth.
+
 ## Next
 
 Mint the full corpus (60 seeds x 100 pieces, ~5 h on the iGPU, no spend) and
