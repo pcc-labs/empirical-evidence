@@ -58,9 +58,11 @@ explicit = true
 torch = [
   { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
 ]
-# ../tetris is a checkout on a stale local main that predates tetris_agent.quality
-# and the current prompts module; point at the worktree checked out at the current work.
-tetris-agent = { path = "../tetris/.claude/worktrees/situation-router", editable = true }
+# Pinned to the tetris commit that added the board to placement_graded (tetris #18),
+# so the corpus builder imports exactly the prompt code that produced the rows, on any
+# machine, with no sibling checkout to keep in sync. For local sibling development swap
+# in `{ path = "../tetris", editable = true }` and relock.
+tetris-agent = { git = "https://github.com/pcc-labs/tetris.git", rev = "583f52585452ab6452bbca2c1cc92f0ea118ddca" }
 
 [tool.ruff]
 line-length = 100

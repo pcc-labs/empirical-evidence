@@ -720,7 +720,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "safetensors", specifier = ">=0.8" },
-    { name = "tetris-agent", marker = "extra == 'tetris'", editable = "../tetris/.claude/worktrees/situation-router" },
+    { name = "tetris-agent", marker = "extra == 'tetris'", git = "https://github.com/pcc-labs/tetris.git?rev=583f52585452ab6452bbca2c1cc92f0ea118ddca" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.7" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", specifier = ">=4.45" },
@@ -3107,7 +3107,7 @@ wheels = [
 [[package]]
 name = "tetris-agent"
 version = "0.1.0"
-source = { editable = "../tetris/.claude/worktrees/situation-router" }
+source = { git = "https://github.com/pcc-labs/tetris.git?rev=583f52585452ab6452bbca2c1cc92f0ea118ddca#583f52585452ab6452bbca2c1cc92f0ea118ddca" }
 dependencies = [
     { name = "anthropic" },
     { name = "fastapi" },
@@ -3117,25 +3117,6 @@ dependencies = [
     { name = "pyboy" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = ">=0.120.2" },
-    { name = "fastapi", specifier = ">=0.141.1" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pillow", specifier = ">=12.3.0" },
-    { name = "pyboy", specifier = ">=2.4" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
-    { name = "websockets", specifier = ">=17.0.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-cov", specifier = ">=5" },
-    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]
