@@ -1,12 +1,12 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "torch",
-#   "transformers",
-#   "peft",
-#   "trl",
-#   "datasets",
-#   "accelerate",
+#   "torch>=2.11,<3",
+#   "transformers>=5.12,<6",
+#   "peft>=0.19,<1",
+#   "trl>=1.7,<2",
+#   "datasets>=5.0,<6",
+#   "accelerate>=1.14,<2",
 #   "huggingface_hub",
 # ]
 # ///

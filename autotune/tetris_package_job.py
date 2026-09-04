@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "torch",
-#   "transformers",
-#   "peft",
+#   "torch>=2.11,<3",
+#   "transformers>=5.12,<6",
+#   "peft>=0.19,<1",
 #   "huggingface_hub",
 #   "gguf>=0.10",
 #   "sentencepiece",
