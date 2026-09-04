@@ -164,3 +164,69 @@ def test_upload_tier1_writes_the_json_then_pushes_a_second_commit_and_tags(tmp_p
     assert "tier-1" in kw["commit_message"] or "corpus-1" in kw["commit_message"]
     _, args, kw = api.calls[1]
     assert kw.get("tag") == "corpus-1" or args[1:2] == ("corpus-1",)
+
+
+def test_resolve_corpus_prefers_the_corpus_dir_under_a_local_parent(tmp_path):
+    """CORPUS_DIR may be the parent tetris_corpus --out / hf download wrote the
+    corpus under, or the <corpus_id>/ directory itself. Either way the Hub is
+    never touched."""
+    from autotune.tetris_train_job import resolve_corpus
+
+    corpus = tmp_path / "corpus-1"
+    corpus.mkdir()
+    (corpus / "train.jsonl").write_text("{}\n")
+
+    def never(_):
+        raise AssertionError("downloaded")
+
+    assert resolve_corpus("corpus-1", str(tmp_path), never) == corpus
+    assert resolve_corpus("corpus-1", str(corpus), never) == corpus
+
+
+def test_resolve_corpus_fails_loudly_on_an_empty_local_dir(tmp_path):
+    import pytest
+
+    from autotune.tetris_train_job import resolve_corpus
+
+    with pytest.raises(FileNotFoundError, match="CORPUS_DIR"):
+        resolve_corpus("corpus-1", str(tmp_path), lambda _: tmp_path)
+
+
+def test_resolve_corpus_downloads_when_no_local_dir_is_given(tmp_path):
+    from autotune.tetris_train_job import resolve_corpus
+
+    seen = []
+
+    def download(cid):
+        seen.append(cid)
+        return tmp_path
+
+    assert resolve_corpus("corpus-1", None, download) == tmp_path / "corpus-1"
+    assert seen == ["corpus-1"]
+
+
+def test_should_upload_is_off_for_a_local_corpus_unless_asked():
+    """A local run must not need HF_TOKEN; UPLOAD=1 opts back in, UPLOAD=0 opts
+    the HF Jobs path out."""
+    from autotune.tetris_train_job import should_upload
+
+    assert should_upload({}) is True
+    assert should_upload({"CORPUS_DIR": "data/tetris"}) is False
+    assert should_upload({"CORPUS_DIR": "data/tetris", "UPLOAD": "1"}) is True
+    assert should_upload({"UPLOAD": "0"}) is False
+
+
+def test_generate_tier1_carries_the_crash_so_a_partial_result_is_not_a_bad_student():
+    """`{"n": 0, "top1": 0.0}` after a crash must not read as a student that
+    scored zero: the error and the intended row count travel with the numbers."""
+    rows = _rows()
+
+    def crash(row):
+        raise RuntimeError("boom")
+
+    tier1, answers = generate_tier1(rows, crash)
+    assert answers == [] and tier1["n"] == 0
+    assert "boom" in tier1["generation_error"] and tier1["eval_rows"] == len(rows)
+
+    tier1, _ = generate_tier1(rows, lambda row: '{"rotation": 0, "col": 3}')
+    assert tier1["generation_error"] is None and tier1["eval_rows"] == tier1["n"]
