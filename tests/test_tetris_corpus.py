@@ -150,11 +150,13 @@ def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():
     row = sft_row(r)
     system, user, assistant = row["messages"]
     board = board_array(r.board)
+    # A literal deadline, not LIVE_DEADLINE_S piped through both sides: this must
+    # fail if someone edits the constant without editing what it renders to.
     expected_user = (
         build_user_prompt(
             "features", board, r.piece, r.next_piece,
             legal_placements(board, r.piece), r.turn,
-            deadline_s=LIVE_DEADLINE_S,
+            deadline_s=13.0,
         )
         + PI_PROMPT_SUFFIX
     )
@@ -163,6 +165,22 @@ def test_sft_user_turn_is_byte_identical_to_the_served_pi_prompt():
     }
     assert user == {"role": "user", "content": expected_user}
     assert assistant["role"] == "assistant"
+
+
+def test_live_deadline_s_never_exceeds_the_served_prompts_level0_ceiling():
+    """`LIVE_DEADLINE_S` must be a value the live prompt can actually produce.
+
+    tetris's live_agent._deadline_s tops out, at level 0, at
+    (ROWS - 1) * (_GRAVITY_RELOADS[0] + 1) / 60 - _EXEC_HEADROOM_S. A gravity or
+    headroom change in tetris should break this build, not silently corrupt the
+    corpus with a deadline line the served prompt can never say.
+    """
+    from tetris_agent.board import ROWS
+    from tetris_agent.emulator import Emulator
+    from tetris_agent.live_agent import _EXEC_HEADROOM_S
+
+    ceiling = (ROWS - 1) * (Emulator._GRAVITY_RELOADS[0] + 1) / 60 - _EXEC_HEADROOM_S
+    assert LIVE_DEADLINE_S <= ceiling
 
 
 def test_sft_assistant_turn_is_the_terse_placement_json():

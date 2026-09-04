@@ -30,7 +30,13 @@ GRADE_KEYS = (
 DEATH_SPIRAL = 5
 TRAIN_SEED_MIN = 100
 EVAL_SEEDS = (1, 2, 3, 4, 5)
-LIVE_DEADLINE_S = 15.0
+# The served live prompt's level-0 ceiling: tetris_agent.live_agent._deadline_s is
+# max(1.0, rows_to_fall * frames_per_row / 60 - _EXEC_HEADROOM_S), and at level 0
+# with Emulator._GRAVITY_RELOADS[0] == 52, ROWS == 18, _EXEC_HEADROOM_S == 2.0, the
+# maximum (a piece spawning at the very top, rows_to_fall == ROWS - 1 == 17) is
+# 17 * 53 / 60 - 2.0 = 13.017s. 13.0 stays under that ceiling for every board depth
+# and every level >= 0 the served prompt can produce (a real spawn is usually ~12s).
+LIVE_DEADLINE_S = 13.0
 
 
 @dataclass(frozen=True)
