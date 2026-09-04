@@ -19,6 +19,7 @@ from pathlib import Path
 
 TOKEN_RATIO = 1.5
 GOAL_RACE = 530.0
+MIN_SEEDS = 3
 
 
 def race(run: dict) -> float:
@@ -35,6 +36,14 @@ def _tokens(run: dict) -> float:
 
 def _late(run: dict) -> int:
     return int(((run.get("fitness") or {}).get("policy") or {}).get("late", 0))
+
+
+def _effort(run: dict) -> str | None:
+    return ((run.get("fitness") or {}).get("policy") or {}).get("effort")
+
+
+def _seed(run: dict) -> object:
+    return run.get("seed")
 
 
 def runs_for(result: dict, model: str) -> list[dict]:
@@ -64,6 +73,34 @@ class GateResult:
 def gate(tuned_runs: list[dict], base_runs: list[dict]) -> GateResult:
     if not tuned_runs or not base_runs:
         return GateResult(False, ["no runs for tuned or base arm"])
+
+    # The median rule exists because the same weights and seed have scored 225
+    # and 530 on different runs -- it must not get decided on a lopsided subset.
+    tuned_seeds, base_seeds = {_seed(x) for x in tuned_runs}, {_seed(x) for x in base_runs}
+    missing = sorted(tuned_seeds ^ base_seeds, key=str)
+    if missing:
+        return GateResult(
+            False, [f"tuned and base seed sets differ — missing seed(s) {missing}"]
+        )
+    if len(tuned_seeds) < MIN_SEEDS:
+        return GateResult(
+            False, [f"only {len(tuned_seeds)} seed(s) — need at least {MIN_SEEDS}"]
+        )
+
+    # An unlisted tuned tag makes tetris pricing.spec return supports_effort=False,
+    # so the run comes back with thinking on (no --thinking sent) and is not
+    # comparable to the effort-off baseline. fitness.policy.effort == "off" is the
+    # tell that the arm actually ran the way its name (.../off+live+fixed) claims.
+    bad_effort = sorted({str(x.get("arm", "")) for x in tuned_runs if _effort(x) != "off"})
+    if bad_effort:
+        return GateResult(
+            False,
+            [
+                f"tuned arm ran effort-free — add the tag to tetris pricing.MODELS: {arm}"
+                for arm in bad_effort
+            ],
+        )
+
     r = GateResult(
         passed=True,
         tuned_median=statistics.median(race(x) for x in tuned_runs),
