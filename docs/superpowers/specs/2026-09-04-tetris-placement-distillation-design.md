@@ -85,7 +85,7 @@ already demonstrably plays — and E4B does.
 outside, reads its telemetry, and never modifies it. Tetris gets the same treatment.
 
 ```
-tetris (this box)     play games → runs/<id>/{events,boards}.jsonl + summary.json
+tetris (this box)     play games → runs/<id>/events.jsonl (graded events carry the board) + summary.json
                       tapes capture per run (traces for builders, not the corpus)
         │ tetris_rollout.py
         ▼
@@ -123,52 +123,54 @@ or human arms. They join on `run_id` + `turn`. Neither substitutes for the other
 
 ## The tetris contract
 
-Three additions, all small, none touching existing events or numbers.
+One field. The `placement_graded` event gains the board the decision was made on:
 
-### 1. `boards.jsonl` — the state the results are about
-
-Written beside `events.jsonl`, one line per decision the policy was asked for, at the moment
-the policy is called (so late decisions are recorded too; the join to `placement_graded`
-filters them):
-
-```json
-{"turn": 7, "piece": "T", "next_piece": "I", "deadline_s": 12.4,
- "board": ["..........", "..........", ..., "###.######"]}
+```python
+# events.py
+def build_graded_event(turn, grade, board=None):
+    data = grade.to_dict()
+    if board is not None:
+        data["board"] = ["".join("#" if c else "." for c in row) for row in board]
+    return _envelope("placement_graded", turn, data)
 ```
 
+and the two call sites that already hold the board pass it:
+`collector.graded(g, board=board)` in `agent.py` and `live_agent.py`. About six lines and one
+test. No new file, flag, module or seam.
+
 - `board`: 18 rows of 10 chars, `.` empty / `#` settled, row 0 at top — the encoding
-  `situation_corpus.py` already defines as `BOARDS_FILE` and reads with `_captured()`.
-- `deadline_s`: the value passed to `build_user_prompt` on live; `null` when paused. Recorded
-  so a corpus rendered later carries the exact deadline line the model saw.
-- Why a sibling file and not a field on `placement_graded`: the placement-quality design's
-  isolation guarantee keeps every event's shape fixed; and the reader already exists.
-- `--no-quality` suppresses it along with the rest of the trace directory.
+  `situation_corpus.py` already uses, so its `_captured()` reader parses it unchanged.
+- Safe to add: `placement_graded` shipped in #17 the day before this design, and nothing reads
+  its contents — tests assert its presence and ordering, `traces.py` skips it, and the
+  benchmark asserts it never reaches the viewer.
+- Late, timed-out and fallback decisions are never graded, so they never carry a board. That
+  is the filter the corpus wanted anyway, and it means the record below needs no join.
+- `--no-quality` already suppresses the event, so it suppresses the board with it.
 
-The tuple `(board, piece, next_piece)` is already in hand at the grade call sites
-(`agent.py`, `live_agent.py`); the write is a few lines at the point the policy is invoked.
+> **Revised 2026-09-04, after review.** The first draft asked tetris for three things: a
+> sibling `boards.jsonl` with its own writer and a join on `turn`; a `--require-capture`
+> flag; and a `value_fn` keyword on `rank_placements` for a future learned evaluator. The
+> reasons given did not hold. The sibling file protected an "isolation guarantee" on an event
+> that is a day old and has no consumers. The capture preflight belongs to whoever brings up
+> the proxy, which is `tetris_rollout.py` here. And a default keyword argument costs the same
+> three lines whenever it is added, so adding it before a learned evaluator exists is
+> speculation. Tetris keeps its shape; everything else moved into this repo.
 
-### 2. `--require-capture` — refuse to run uncaptured
+Not in the contract, by design: `deadline_s`. Corpus v1 mints paused, where it is `null`, and
+the SFT view renders a fixed live deadline (below). If live-minted rows are ever wanted, the
+deadline is a second optional field on the same event, added then.
 
-`tetris-bench --require-capture` fails before any game starts unless
-`TETRIS_TAPES_OLLAMA_URL` is set and the proxy answers. The tapes stack has existed since
-`scripts/tapes-up.sh` and has captured zero gameplay turns; a silent miss costs the whole run.
-Ops of the stack itself stay outside tetris (see rollout below).
-
-### 3. An injectable evaluator in `quality.py`
-
-`rank_placements(..., value_fn=_value)` — a keyword argument defaulting to today's four-weight
-evaluation. Three lines, behavior unchanged, and it is the seam Expert Iteration plugs a
-learned evaluator into while keeping the search. Doing it now is cheaper than a refactor
-after a learned evaluator exists.
+What tetris looks like after: every module unchanged in shape, one event with one more field,
+and a line in `pricing.MODELS` per tuned tag — the existing way every arm is added.
 
 ## The record
 
-`tetris_corpus.py` joins `boards.jsonl`, `events.jsonl` (`piece_spawn`, `placement_decision`,
+`tetris_corpus.py` reads `events.jsonl` (`piece_spawn`, `placement_decision`,
 `placement_graded`) and `summary.json` into one neutral row per **graded** decision:
 
 ```
 run_id, turn, arm, model, harness, effort, seed, mode
-board, piece, next_piece, deadline_s               ← state, as shown to the model
+board, piece, next_piece                           ← state, as shown to the model
 chosen: [rotation, col], reason                    ← what the arm did
 grade: {rank, legal_count, regret, regret_norm, best, chosen_value, best_value,
         worst_value, genome, ply}                  ← verbatim from placement_graded
@@ -184,14 +186,17 @@ so the full ranked distribution is recomputable offline at any depth — the pol
 Expert Iteration, the rejected set for a preference view, a deeper grade if two-ply proves
 too shallow. Recording it would freeze one depth into the corpus for no gain.
 
-Join rules:
-- Rows are keyed on `turn`. A decision without a `placement_graded` event (late, timed-out,
-  fallback) yields no row; the exclusion counts are reported in `stats.json`.
-- `reason` is the decision event's `reason` string. It is the teacher's one-sentence
-  explanation and is the assistant turn's text in the SFT view.
-- Runs missing `boards.jsonl` (everything recorded before this change) are skipped with a
-  count, never replayed: `traces.mine_run` recovers a board on 33 % of graded decisions, and
-  that path is not good enough to train on.
+Reading rules:
+- One row per `placement_graded` event; `board`, `chosen` and the grade come from that event,
+  `piece` and `next_piece` from the `piece_spawn` with the same `turn`, `reason` from the
+  `placement_decision` with the same `turn`. A decision that was never graded (late,
+  timed-out, fallback) has no event and yields no row; the exclusion counts are reported in
+  `stats.json`.
+- `reason` is the teacher's one-sentence explanation and is the assistant turn's text in the
+  SFT view.
+- A `placement_graded` event without a `board` field (everything recorded before this
+  change) is skipped with a count, never replayed: `traces.mine_run` recovers a board on 33 %
+  of graded decisions, and that path is not good enough to train on.
 
 ## Teacher, student, and minting the corpus
 
@@ -213,10 +218,12 @@ teacher's 3 s, and because the teacher answers in 3 s with 0–1 late decisions 
 paused decisions are the same decisions it would make live — only the deadline line in the
 prompt differs, and the SFT view restores that (below). Corpus v1:
 
-- `tetris_rollout.py` shells out to `tetris-bench --paused --require-capture --models
-  pi/gemma4:26b --harnesses features --efforts off --fixed-effort --max-pieces 100`, one
-  seed per invocation, seeds from the **train pool** (`100, 101, …`). It brings up the tapes
-  proxy with `--project tetris-mint-<timestamp>` for the invocation, sets
+- `tetris_rollout.py` shells out to `tetris-bench --paused --models pi/gemma4:26b
+  --harnesses features --efforts off --fixed-effort --max-pieces 100`, one seed per
+  invocation, seeds from the **train pool** (`100, 101, …`). It owns the tapes stack for the
+  invocation: brings up the proxy with `--project tetris-mint-<timestamp>`, **checks that the
+  proxy answers before starting any game** (the stack has existed since `scripts/tapes-up.sh`
+  and has captured zero gameplay turns; a silent miss costs the whole run), sets
   `TETRIS_TAPES_OLLAMA_URL`, and tears it down after. Arms within an invocation are serial
   (one model resident on the iGPU), so a project + time window identifies a run and the
   `Piece {turn}.` header identifies the decision.
@@ -254,7 +261,8 @@ Thin adapters over `records.jsonl`; v1 emits only the first.
   deadline_s=15.0)`, called from the tetris package, never reimplemented. Training input is
   byte-identical to inference input, and a prompt change regenerates the corpus instead of
   silently rotting it. `deadline_s=15.0` is the level-0 fall time — the live prompt shape,
-  even though the rows were minted paused. Rows recorded on live use their recorded value.
+  even though the rows were minted paused. Every row renders the same fixed value; the event
+  carries no per-decision deadline (see the contract).
 - `assistant`: `{"rotation": r, "col": c, "reason": "<teacher's sentence>"}` — the terse
   target. Tokens per decision is a gated number (below); a corpus that taught long answers
   would fail that gate.
@@ -336,8 +344,8 @@ Not built here; listed so nothing in v1 forecloses it.
 - **State** — `board`, `piece`, `next_piece` per decision.
 - **Policy target** — the full ranked distribution, recomputable at any depth from the state.
 - **Value target** — `pieces_after`, recorded per row.
-- **The search** — `rank_placements` is already the search; the learned evaluator plugs in
-  through `value_fn`.
+- **The search** — `rank_placements` is already the search. A learned evaluator replaces
+  `_value` behind a keyword argument when one exists; three lines then, not now.
 - **Re-labeling** — because state is stored, any later teacher (a deeper oracle, a learned
   evaluator, a stronger model) can re-label the same boards offline.
 
@@ -386,25 +394,26 @@ rows, something upstream is wrong.
 Test-driven, each watched failing first.
 
 **tetris**
-1. `boards.jsonl` has one row per policy call, `turn` matches the spawn event, and the board
-   round-trips through `situation_corpus._captured`.
-2. A late decision still writes its board row; a `--no-quality` run writes no `boards.jsonl`.
-3. `--require-capture` exits non-zero before the emulator starts when the proxy is absent.
-4. `rank_placements(value_fn=...)` with the default reproduces today's ranking exactly; with
-   a constant function it ranks by the tie-break alone.
+1. A `placement_graded` event published through the agent carries a `board` of 18 rows of
+   10 chars that round-trips through `situation_corpus._captured`, and equals the board the
+   grader was called with. `build_graded_event(turn, grade)` with no board is byte-identical
+   to today's event.
 
 **empirical-evidence**
-5. `tetris_corpus` joins a synthetic run into rows with the right `pieces_after`, and excludes
-   late, fallback and ungraded decisions with counts.
-6. A run without `boards.jsonl` yields zero rows and a counted skip, never a replay.
-7. The top-out veto drops exactly the `TOP_OUT_VALUE`-with-alternative rows.
-8. The death-spiral filter drops exactly the last 5 rows of a topped-out run.
-9. The seed guard refuses a train row from seed < 100 and a validation row from seed ≥ 100.
-10. The SFT view's user turn equals `build_user_prompt(...)` from the tetris package for the
-    same inputs — a byte comparison, not a resemblance.
-11. The SFT assistant turn parses as a placement and its `rotation`/`col` equal `chosen`.
-12. Tier-1 grading of the teacher's own choices reports regret 0 and top-1 1.0.
-13. The tier-2 gate returns pass/fail per the three rules on synthetic result rows, including
+2. `tetris_corpus` reads a synthetic run into rows with the right `pieces_after`, and reports
+   late, fallback and ungraded decisions as counted exclusions.
+3. A `placement_graded` event without a `board` yields no row and a counted skip, never a
+   replay.
+4. The top-out veto drops exactly the `TOP_OUT_VALUE`-with-alternative rows.
+5. The death-spiral filter drops exactly the last 5 rows of a topped-out run.
+6. The seed guard refuses a train row from seed < 100 and a validation row from seed ≥ 100.
+7. The SFT view's user turn equals `build_user_prompt(...)` from the tetris package for the
+   same inputs — a byte comparison, not a resemblance.
+8. The SFT assistant turn parses as a placement and its `rotation`/`col` equal `chosen`.
+9. `tetris_rollout` refuses to start a game when the proxy does not answer, before the
+   emulator is touched.
+10. Tier-1 grading of the teacher's own choices reports regret 0 and top-1 1.0.
+11. The tier-2 gate returns pass/fail per the three rules on synthetic result rows, including
     the equal-median and the 1.5× boundary cases.
 
 **Smoke, not unit:** one end-to-end mint of 2 runs × 20 pieces, corpus build, a 20-step
