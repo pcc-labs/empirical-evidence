@@ -221,11 +221,14 @@ prompt differs, and the SFT view restores that (below). Corpus v1:
 - `tetris_rollout.py` shells out to `tetris-bench --paused --models pi/gemma4:26b
   --harnesses features --efforts off --fixed-effort --max-pieces 100`, one seed per
   invocation, seeds from the **train pool** (`100, 101, …`). It owns the tapes stack for the
-  invocation: brings up the proxy with `--project tetris-mint-<timestamp>`, **checks that the
-  proxy answers before starting any game** (the stack has existed since `scripts/tapes-up.sh`
-  and has captured zero gameplay turns; a silent miss costs the whole run), sets
-  `TETRIS_TAPES_OLLAMA_URL`, and tears it down after. Arms within an invocation are serial
-  (one model resident on the iGPU), so a project + time window identifies a run and the
+  invocation: brings up the proxy on its own port (`:8093`, not `tapes-up.sh`'s `:8092`) with
+  `--project tetris-mint-<timestamp>`, refuses to start if that port is already bound,
+  **checks that the proxy answers before starting any game**, and after the first seed
+  **verifies capture with a direct Postgres count** (`SELECT count(*) FROM raw_turns WHERE
+  provider = 'openai' AND received_at > <mint_start>`) rather than the tapes read API, which
+  this invocation never starts. Sets `TETRIS_TAPES_OLLAMA_URL` and tears the proxy down after,
+  with its stderr saved to `<runs_dir>/mint-<project>.proxy.log`. Arms within an invocation are
+  serial (one model resident on the iGPU), so a project + time window identifies a run and the
   `Piece {turn}.` header identifies the decision.
 - 60 runs × 100 pieces ≈ 6,000 decisions before filtering, ≈ 5 h of iGPU time. Longer games
   than the benchmark's 30-piece cap on purpose: mid- and late-game boards are the ones a

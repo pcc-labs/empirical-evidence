@@ -5,6 +5,7 @@ import pytest
 from autotune.tetris_rollout import (
     bench_command,
     mint,
+    port_free,
     postgres_up,
     proxy_answers,
     proxy_command,
@@ -40,8 +41,55 @@ def test_postgres_up_is_false_when_nothing_listens():
     assert postgres_up("127.0.0.1", 1, timeout_s=0.2) is False
 
 
-def test_turns_captured_is_zero_when_the_api_is_unreachable():
-    assert turns_captured("http://127.0.0.1:1", "2026-09-04T00:00:00Z", timeout_s=0.2) == 0
+def test_turns_captured_shells_out_to_psql_with_a_direct_postgres_count():
+    """`mint` never starts the tapes read API (only the proxy) -- a count that
+    depends on :8081 answering passes today only because something else started
+    it earlier. Query Postgres directly instead, filtered to provider='openai' so
+    the operator's own Claude Code turns (provider='anthropic' or unset) can't
+    satisfy it."""
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+
+        class _Result:
+            stdout = "3\n"
+
+        return _Result()
+
+    n = turns_captured(
+        "postgres://x/y", "2026-09-04T00:00:00Z", run=fake_run, which=lambda name: "/usr/bin/psql"
+    )
+    assert n == 3
+    cmd = calls[0]
+    assert cmd[:2] == ["psql", "postgres://x/y"]
+    query = cmd[cmd.index("-c") + 1]
+    assert "provider = 'openai'" in query
+    assert "raw_turns" in query
+    assert "2026-09-04T00:00:00Z" in query
+
+
+def test_turns_captured_raises_when_psql_is_absent():
+    with pytest.raises(RuntimeError, match="psql"):
+        turns_captured(
+            "postgres://x/y", "2026-09-04T00:00:00Z",
+            run=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")),
+            which=lambda name: None,
+        )
+
+
+def test_port_free_is_true_when_nothing_listens():
+    assert port_free("127.0.0.1:1", timeout_s=0.2) is True
+
+
+def test_port_free_is_false_when_something_answers():
+    connect = lambda *a, **k: _FakeSocket()  # noqa: E731
+    assert port_free("127.0.0.1:5432", timeout_s=0.2, connect=connect) is False
+
+
+class _FakeSocket:
+    def close(self):
+        pass
 
 
 class _FakeProc:
@@ -74,6 +122,7 @@ def test_mint_refuses_to_start_a_game_when_the_proxy_does_not_answer(tmp_path):
         mint(
             [100], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
             proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434", startup_s=0.0,
+            dsn="postgres://x/y",
             run=fake_run, popen=lambda *a, **k: _FakeProc(),
             answers=lambda url, timeout_s=2.0: False,
             postgres_check=lambda: True, turns_query=lambda *a, **k: 1,
@@ -99,6 +148,60 @@ def test_mint_refuses_to_start_the_proxy_when_postgres_is_unreachable(tmp_path):
     assert popen_calls == []  # the proxy itself must never start
 
 
+def test_mint_refuses_to_start_the_proxy_when_the_listen_port_is_already_bound(tmp_path):
+    """`:8092` is tapes-up.sh's own proxy port; if it's already bound, `tapes serve
+    proxy` fails to bind silently and `proxy_answers` ends up satisfied by whatever
+    else is listening there. Refuse before that can happen."""
+    popen_calls = []
+
+    def fake_popen(*a, **kw):
+        popen_calls.append(a)
+        return _FakeProc()
+
+    with pytest.raises(RuntimeError, match="tapes-up.sh"):
+        mint(
+            [100], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
+            proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+            dsn="postgres://x/y",
+            run=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")),
+            popen=fake_popen, answers=lambda url, timeout_s=2.0: True,
+            postgres_check=lambda: True, port_free_check=lambda listen: False,
+            turns_query=lambda *a, **k: 1,
+        )
+    assert popen_calls == []  # the proxy itself must never start on a busy port
+
+
+def test_mint_includes_the_proxy_log_tail_when_the_proxy_does_not_answer(tmp_path):
+    """stderr used to go to DEVNULL, which made a bind failure on a busy port
+    silent. It's written to <runs_dir>/mint-<project>.proxy.log now, and the
+    refusal quotes the tail of it."""
+
+    class _WritingProc:
+        def __init__(self, stderr_target):
+            stderr_target.write("bind: address already in use\n")
+            stderr_target.flush()
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            pass
+
+    def fake_popen(cmd, stdout=None, stderr=None, **kw):
+        return _WritingProc(stderr)
+
+    with pytest.raises(RuntimeError, match="address already in use"):
+        mint(
+            [100], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
+            proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434", startup_s=0.0,
+            dsn="postgres://x/y",
+            run=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")),
+            popen=fake_popen, answers=lambda url, timeout_s=2.0: False,
+            postgres_check=lambda: True, port_free_check=lambda listen: True,
+            turns_query=lambda *a, **k: 1,
+        )
+
+
 def test_mint_refuses_when_the_first_seed_captures_zero_turns(tmp_path):
     """The proxy answering GET /v1/models only proves it forwards to Ollama, not
     that tapes can write to Postgres. Zero turns captured after a completed seed
@@ -117,6 +220,7 @@ def test_mint_refuses_when_the_first_seed_captures_zero_turns(tmp_path):
         mint(
             [100, 101], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
             proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+            dsn="postgres://x/y",
             run=fake_run, popen=lambda *a, **k: proc, answers=lambda url, timeout_s=2.0: True,
             postgres_check=lambda: True, turns_query=lambda *a, **k: 0,
         )
@@ -138,6 +242,7 @@ def test_mint_records_the_new_run_dirs_with_their_seed(tmp_path):
     rows = mint(
         [100, 101], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
         proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+        dsn="postgres://x/y",
         run=fake_run, popen=lambda *a, **k: _FakeProc(), answers=lambda url, timeout_s=2.0: True,
         postgres_check=lambda: True, turns_query=lambda *a, **k: 3,
     )
@@ -162,6 +267,7 @@ def test_mint_refuses_a_seed_that_completes_without_a_new_run_dir(tmp_path):
         mint(
             [100], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
             proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+            dsn="postgres://x/y",
             run=fake_run, popen=lambda *a, **k: proc, answers=lambda url, timeout_s=2.0: True,
             postgres_check=lambda: True, turns_query=lambda *a, **k: 3,
         )
@@ -184,6 +290,7 @@ def test_mint_writes_the_manifest_incrementally_surviving_a_later_raise(tmp_path
         mint(
             [100, 101], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
             proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+            dsn="postgres://x/y",
             run=fake_run, popen=lambda *a, **k: _FakeProc(),
             answers=lambda url, timeout_s=2.0: True,
             postgres_check=lambda: True, turns_query=lambda *a, **k: 3,
@@ -222,6 +329,7 @@ def test_mint_creates_the_runs_dir_when_the_checkout_has_none(tmp_path):
         proxy_listen="127.0.0.1:8092",
         upstream="http://127.0.0.1:11434",
         startup_s=0.0,
+        dsn="postgres://x/y",
         run=fake_run,
         popen=lambda *a, **k: FakeProc(),
         answers=lambda url, timeout_s=2.0: True,

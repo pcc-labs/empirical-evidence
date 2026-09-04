@@ -1,9 +1,12 @@
 """Try: mint teacher games in tetris under a tapes capture proxy.
 
 Owns the proxy for one invocation (project `tetris-mint-<timestamp>`), refuses to
-start a game unless the proxy answers, runs `tetris-bench --paused` one seed at a
-time, and writes a manifest of the run directories it produced. Subprocess
-wrapper; exercised by the smoke run, not unit tests, except for the pure parts.
+start a game unless the proxy answers and the listen port was free beforehand,
+runs `tetris-bench --paused` one seed at a time, verifies the first seed actually
+landed rows in Postgres (a direct `SELECT count(*) FROM raw_turns`, not the tapes
+read API mint never starts), and writes a manifest of the run directories it
+produced. Subprocess wrapper; exercised by the smoke run, not unit tests, except
+for the pure parts.
 
 Spec: docs/superpowers/specs/2026-09-04-tetris-placement-distillation-design.md
 """
@@ -13,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -24,12 +28,16 @@ from pathlib import Path
 
 DEFAULT_MODEL = "pi/gemma4:26b"
 DEFAULT_MAX_PIECES = 100
-DEFAULT_PROXY_LISTEN = "127.0.0.1:8092"
+# tetris/scripts/tapes-up.sh binds :8092 for its own Ollama proxy -- mint used to
+# collide with it there. A busy :8092 makes `tapes serve proxy` fail to bind,
+# straight into the stderr this module used to discard, and games would be
+# captured under tapes-up's project instead of the mint's.
+DEFAULT_PROXY_LISTEN = "127.0.0.1:8093"
 DEFAULT_UPSTREAM = "http://127.0.0.1:11434"
-DEFAULT_API_BASE = "http://127.0.0.1:8081"
 POSTGRES_HOST = "127.0.0.1"
 POSTGRES_PORT = 5432
 PROXY_STARTUP_S = 10.0
+PROXY_LOG_TAIL_LINES = 20
 
 
 def bench_command(
@@ -109,22 +117,60 @@ def postgres_up(
         return False
 
 
-def turns_captured(api_base: str, since: str, timeout_s: float = 5.0) -> int:
-    """Turn count tapes has recorded since `since` (RFC3339), from its /v1/stats.
+def port_free(listen: str, timeout_s: float = 0.5, connect=socket.create_connection) -> bool:
+    """True when nothing answers a TCP connect on `listen` (host:port).
 
-    Proof the proxy is not just forwarding but tapes is actually writing to
-    Postgres: any failure to reach the read API counts as zero, the same as a
-    reachable API reporting nothing captured.
+    Checked before the proxy is started: `tapes serve proxy` fails to bind on a
+    port something else already owns, silently into the stderr this module used
+    to discard, and `proxy_answers` ends up satisfied by whatever else is
+    listening there instead -- games get captured under the wrong project and
+    nothing notices.
     """
+    host, _, port_s = listen.partition(":")
     try:
-        with urllib.request.urlopen(f"{api_base}/v1/stats?since={since}", timeout=timeout_s) as r:
-            return int(json.loads(r.read())["turn_count"])
-    except (urllib.error.URLError, OSError, ValueError, KeyError):
-        return 0
+        connect((host, int(port_s)), timeout=timeout_s).close()
+        return False  # something answered -- the port is not free
+    except OSError:
+        return True
+
+
+def turns_captured(
+    dsn: str, since: str, timeout_s: float = 5.0, run=subprocess.run, which=shutil.which
+) -> int:
+    """Count of `raw_turns` rows tapes has written to Postgres since `since` (RFC3339).
+
+    Queries Postgres directly rather than tapes' read API: `mint` starts only the
+    capture proxy (`:8093`), never the read API (`:8081`), so a check that
+    depended on the read API answering passed only when something else had
+    started it earlier. Postgres is already a hard requirement of `mint`
+    (`postgres_check` refuses without it) and `psql` is expected on this box.
+    `provider = 'openai'` excludes the operator's own Claude Code turns, which
+    land under `provider = 'anthropic'` or with no provider at all.
+    """
+    if which("psql") is None:
+        raise RuntimeError(
+            "psql is required to verify capture via Postgres and was not found on PATH"
+        )
+    query = (
+        "SELECT count(*) FROM raw_turns WHERE provider = 'openai' "
+        f"AND received_at > '{since}'"
+    )
+    proc = run(
+        ["psql", dsn, "-t", "-A", "-c", query], capture_output=True, text=True, timeout=timeout_s
+    )
+    return int(proc.stdout.strip())
 
 
 def _run_dirs(runs_dir: Path) -> set[str]:
     return {p.name for p in runs_dir.iterdir() if p.is_dir()} if runs_dir.is_dir() else set()
+
+
+def _tail_lines(path: Path, n: int) -> str:
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-n:])
 
 
 def mint(
@@ -137,11 +183,12 @@ def mint(
     proxy_listen: str = DEFAULT_PROXY_LISTEN,
     upstream: str = DEFAULT_UPSTREAM,
     startup_s: float = PROXY_STARTUP_S,
-    api_base: str = DEFAULT_API_BASE,
+    dsn: str | None = None,
     run=subprocess.run,
     popen=subprocess.Popen,
     answers=proxy_answers,
     postgres_check=postgres_up,
+    port_free_check=port_free,
     turns_query=turns_captured,
 ) -> list[dict]:
     tetris_dir = Path(tetris_dir)
@@ -155,29 +202,49 @@ def mint(
             "`tapes local up` first. Refusing to start the capture proxy uncaptured."
         )
 
-    proc = popen(
-        proxy_command(project, proxy_listen, upstream),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if not port_free_check(proxy_listen):
+        raise RuntimeError(
+            f"{proxy_listen} is already bound — tapes-up.sh (or something else) is likely "
+            "listening there, and `tapes serve proxy` will fail to bind against it. Stop "
+            "the other listener, or pass a different --proxy-listen."
+        )
+
+    dsn = dsn if dsn is not None else proxy_dsn()
+
+    # `runs/` is gitignored in tetris, so a fresh checkout has none until the
+    # first tetris-bench creates it -- and both the proxy log and the manifest
+    # are opened before the first game runs. Without this the first real mint
+    # dies on FileNotFoundError.
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    proxy_log_path = runs_dir / f"mint-{project}.proxy.log"
+    proxy_log = open(proxy_log_path, "w")
+    try:
+        proc = popen(
+            proxy_command(project, proxy_listen, upstream, dsn=dsn),
+            stdout=subprocess.DEVNULL,
+            stderr=proxy_log,
+        )
+    except Exception:
+        proxy_log.close()
+        raise
     try:
         deadline = time.monotonic() + startup_s
         while not answers(base_url) and time.monotonic() < deadline:
             time.sleep(0.25)
         if not answers(base_url):
+            proxy_log.flush()
+            tail = _tail_lines(proxy_log_path, PROXY_LOG_TAIL_LINES)
+            detail = f"\nlast lines of {proxy_log_path}:\n{tail}" if tail else ""
             raise RuntimeError(
                 f"tapes proxy at {base_url} does not answer — is Postgres up "
                 f"(`tapes local up`) and Ollama at {upstream}? Refusing to play uncaptured."
+                f"{detail}"
             )
 
         env = {**os.environ, "TETRIS_TAPES_OLLAMA_URL": f"{base_url}/v1"}
         mint_started = f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
         rows: list[dict] = []
         manifest_path = runs_dir / f"mint-{project}.jsonl"
-        # `runs/` is gitignored in tetris, so a fresh checkout has none until the
-        # first tetris-bench creates it -- and the manifest is opened before the
-        # first game runs. Without this the first real mint dies on FileNotFoundError.
-        runs_dir.mkdir(parents=True, exist_ok=True)
         with open(manifest_path, "w") as manifest:
             for i, seed in enumerate(seeds):
                 before = _run_dirs(runs_dir)
@@ -209,7 +276,7 @@ def mint(
                     # The proxy answering GET /v1/models only proves it forwards
                     # to Ollama, not that tapes can write to Postgres. Prove
                     # capture before spending the remaining seeds uncaptured.
-                    n = turns_query(api_base, mint_started)
+                    n = turns_query(dsn, mint_started)
                     if n == 0:
                         raise RuntimeError(
                             f"tapes recorded zero turns since {mint_started} after seed "
@@ -221,6 +288,7 @@ def mint(
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+        proxy_log.close()
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - subprocess driver
