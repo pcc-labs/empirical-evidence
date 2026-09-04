@@ -32,6 +32,14 @@ tetris = [
     "tetris-agent",
 ]
 
+# Local packaging on the 5090: llama.cpp's convert_hf_to_gguf.py reads the Gemma
+# tokenizer through sentencepiece/protobuf. gguf itself comes from the checkout's
+# gguf-py (LLAMA_CPP_DIR), matching the converter's version exactly.
+package = [
+    "sentencepiece>=0.2",
+    "protobuf>=4",
+]
+
 [dependency-groups]
 dev = [
     "ruff",

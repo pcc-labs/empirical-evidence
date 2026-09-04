@@ -10,14 +10,22 @@
 #   "huggingface_hub",
 # ]
 # ///
-"""LoRA SFT of the Tetris student on HF Jobs, with tier-1 eval, in one file.
+"""LoRA SFT of the Tetris student, with tier-1 eval, in one file.
 
 Runs as `hf jobs uv run autotune/tetris_train_job.py` -- the file is uploaded on
-its own, so it imports nothing from this repo. Its pure parts (`parse_placement`,
-`grade_answers`) are unit-tested locally; `main` is the GPU path, smoke-tested.
+its own, so it imports nothing from this repo -- or locally on the 5090 as
+`uv run python -m autotune.tetris_train_job` with CORPUS_DIR set. Its pure parts
+(`parse_placement`, `grade_answers`, `resolve_corpus`, `should_upload`) are
+unit-tested locally; `main` is the GPU path, smoke-tested.
 
-Env: CORPUS_REPO (dataset), CORPUS_ID, BASE_MODEL, ADAPTER_REPO (model),
+Env, HF Jobs: CORPUS_REPO (dataset), CORPUS_ID, BASE_MODEL, ADAPTER_REPO (model),
 MAX_STEPS (optional), HF_TOKEN (secret).
+
+Env, local: CORPUS_DIR (the `<corpus_id>/` directory tetris_corpus wrote, or its
+parent) skips the Hub download and, unless UPLOAD=1, the Hub upload; ADAPTER_DIR
+is where the adapter and eval_tier1.json land (default `adapter/`). BATCH_SIZE and
+GRAD_ACCUM override the 4 x 4 recipe -- if 32 GB OOMs, drop to 2 x 8 before
+reaching for 4-bit.
 
 Spec: docs/superpowers/specs/2026-09-04-tetris-placement-distillation-design.md
 """
@@ -28,6 +36,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from pathlib import Path
 
 _JSON_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
@@ -118,6 +127,34 @@ def _env(name: str, default: str | None = None) -> str:
     return value
 
 
+def resolve_corpus(corpus_id: str, corpus_dir: str | None, download) -> Path:
+    """The directory holding train.jsonl and eval.jsonl.
+
+    CORPUS_DIR set: a local directory -- the `<corpus_id>/` directory itself, or
+    the parent tetris_corpus `--out` and `hf download --local-dir` both write it
+    under. No Hub round trip. Unset: `download(corpus_id)` returns the snapshot
+    root, as on HF Jobs.
+    """
+    if corpus_dir:
+        root = Path(corpus_dir)
+        for candidate in (root / corpus_id, root):
+            if (candidate / "train.jsonl").is_file():
+                return candidate
+        raise FileNotFoundError(
+            f"CORPUS_DIR={corpus_dir}: no train.jsonl under {root / corpus_id} or {root}"
+        )
+    return Path(download(corpus_id)) / corpus_id
+
+
+def should_upload(env) -> bool:
+    """Push the adapter to the Hub? UPLOAD=1/0 decides explicitly. Unset, a local
+    corpus (CORPUS_DIR) means a local run and nothing leaves the box."""
+    explicit = env.get("UPLOAD")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes"}
+    return not env.get("CORPUS_DIR")
+
+
 def upload_adapter(api, out_dir: Path, adapter_repo: str, corpus_id: str) -> None:
     """Push the trained weights as their own commit, before tier-1 runs at all.
 
@@ -142,12 +179,20 @@ def generate_tier1(eval_rows: list[dict], generate) -> tuple[dict, list[str]]:
     before the failure instead of losing the run.
     """
     answers: list[str] = []
+    error: str | None = None
     try:
         for row in eval_rows:
             answers.append(generate(row))
     except Exception as exc:  # noqa: BLE001 — must not cost the run already saved
-        print(f"[train_job] tier-1 generation failed after {len(answers)} rows: {exc!r}")
-    return grade_answers(eval_rows[: len(answers)], answers), answers
+        error = repr(exc)
+        print(f"[train_job] tier-1 generation failed after {len(answers)} rows: {error}")
+        traceback.print_exc()
+    tier1 = grade_answers(eval_rows[: len(answers)], answers)
+    # `{"n": 0, "top1": 0.0}` from a crash is indistinguishable from a genuinely
+    # bad student; the error travels with the numbers so the gate can tell.
+    tier1["generation_error"] = error
+    tier1["eval_rows"] = len(eval_rows)
+    return tier1, answers
 
 
 def upload_tier1(api, out_dir: Path, adapter_repo: str, corpus_id: str, tier1: dict) -> None:
@@ -164,10 +209,12 @@ def upload_tier1(api, out_dir: Path, adapter_repo: str, corpus_id: str, tier1: d
 
 
 def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
+    import gc
+
     import torch
     from datasets import Dataset
     from huggingface_hub import HfApi, snapshot_download
-    from peft import LoraConfig, get_peft_model
+    from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from trl import SFTConfig, SFTTrainer
 
@@ -176,11 +223,18 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     base_model = _env("BASE_MODEL", "google/gemma-4-E4B-it")
     adapter_repo = _env("ADAPTER_REPO", "bdougie/gemma-4-E4B-tetris-lora")
     max_steps = int(os.environ.get("MAX_STEPS", "-1"))
+    batch_size = int(os.environ.get("BATCH_SIZE", "4"))
+    grad_accum = int(os.environ.get("GRAD_ACCUM", "4"))
+    upload = should_upload(os.environ)
 
-    corpus = (
-        Path(snapshot_download(corpus_repo, repo_type="dataset", allow_patterns=[f"{corpus_id}/*"]))
-        / corpus_id
+    corpus = resolve_corpus(
+        corpus_id,
+        os.environ.get("CORPUS_DIR"),
+        lambda cid: snapshot_download(
+            corpus_repo, repo_type="dataset", allow_patterns=[f"{cid}/*"]
+        ),
     )
+    print(f"[train_job] corpus dir {corpus}; upload={'yes' if upload else 'no'}")
     train_lines = (corpus / "train.jsonl").read_text().splitlines()
     eval_lines = (corpus / "eval.jsonl").read_text().splitlines()
     train_rows = [json.loads(x) for x in train_lines if x.strip()]
@@ -197,7 +251,7 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     print("[train_job] rendered example:\n" + rendered[:600])
 
     model = AutoModelForCausalLM.from_pretrained(
-        base_model, torch_dtype=torch.bfloat16, device_map="auto"
+        base_model, dtype=torch.bfloat16, device_map="auto"
     )
     projections = "q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj"
     try:
@@ -227,15 +281,16 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
         )
     model.print_trainable_parameters()
 
-    out_dir = Path("adapter")
+    out_dir = Path(os.environ.get("ADAPTER_DIR", "adapter"))
+    out_dir.mkdir(parents=True, exist_ok=True)
     trainer = SFTTrainer(
         model=model,
         args=SFTConfig(
             output_dir=str(out_dir),
             num_train_epochs=2,
             max_steps=max_steps,
-            per_device_train_batch_size=4,
-            gradient_accumulation_steps=4,
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum,
             learning_rate=2e-4,
             warmup_ratio=0.03,
             lr_scheduler_type="cosine",
@@ -258,14 +313,32 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     tokenizer.save_pretrained(str(out_dir))
 
     # Push the weights now, before tier-1 runs at all: a tier-1 crash must never
-    # cost the hour of paid GPU time that produced them.
-    api = HfApi()
-    upload_adapter(api, out_dir, adapter_repo, corpus_id)
-    print(f"[train_job] pushed {adapter_repo} adapter for corpus {corpus_id}")
+    # cost the hour of paid GPU time that produced them. Locally the weights are
+    # already on disk under out_dir, so there is nothing to protect.
+    api = HfApi() if upload else None
+    if upload:
+        upload_adapter(api, out_dir, adapter_repo, corpus_id)
+        print(f"[train_job] pushed {adapter_repo} adapter for corpus {corpus_id}")
+    else:
+        print(f"[train_job] adapter saved to {out_dir} (no upload)")
 
     # Tier 1: generate a placement per held-out board and grade it against the
     # shipped ranking. generate_tier1 catches a mid-loop crash (OOM, a
     # chat-template edge case) and grades whatever was produced before it.
+    #
+    # Grade the adapter as saved, on a fresh base -- not the in-process model.
+    # After SFTTrainer.train() the model's `forward` no longer carries
+    # `logits_to_keep` in its signature, so generate() gets [batch, seq, vocab]
+    # logits and dies in _sample ("Tensors must have same number of dimensions:
+    # got 2 and 3") on the first row: n=0 every run, on any transformers >= 5.
+    # Reloading also proves the files on disk are what the package step needs.
+    del trainer, model
+    gc.collect()
+    torch.cuda.empty_cache()
+    model = PeftModel.from_pretrained(
+        AutoModelForCausalLM.from_pretrained(base_model, dtype=torch.bfloat16, device_map="auto"),
+        str(out_dir),
+    )
     model.eval()
 
     def _generate_one(row: dict) -> str:
@@ -284,8 +357,12 @@ def main() -> int:  # pragma: no cover - GPU path, exercised by the smoke job
     tier1["corpus_id"] = corpus_id
     print("[train_job] tier-1: " + json.dumps(tier1))
 
-    upload_tier1(api, out_dir, adapter_repo, corpus_id, tier1)
-    print(f"[train_job] pushed {adapter_repo} tag {corpus_id}")
+    if upload:
+        upload_tier1(api, out_dir, adapter_repo, corpus_id, tier1)
+        print(f"[train_job] pushed {adapter_repo} tag {corpus_id}")
+    else:
+        (out_dir / "eval_tier1.json").write_text(json.dumps(tier1, indent=2))
+        print(f"[train_job] wrote {out_dir / 'eval_tier1.json'}")
     return 0
 
 
