@@ -8,6 +8,7 @@ from autotune.tetris_corpus import (
     TRAIN_SEED_MIN,
     apply_filters,
     board_array,
+    eval_row,
     read_run,
     sft_row,
     split,
@@ -174,3 +175,30 @@ def test_board_array_round_trips():
     arr = board_array(r.board)
     assert arr.shape == (18, 10) and arr.dtype == bool
     assert ["".join("#" if c else "." for c in row) for row in arr] == r.board
+
+
+def test_eval_row_carries_prompt_teacher_and_the_full_ranking():
+    from tetris_agent.prompts import legal_placements
+
+    r, *_ = read_run(FIXTURE)[0]
+    row = eval_row(r)
+    assert [m["role"] for m in row["messages"]] == ["system", "user"]
+    assert row["messages"] == sft_row(r)["messages"][:2]
+    assert row["teacher"] == r.chosen
+    # One entry per legal placement, computed by the same enumeration the prompt shows.
+    assert len(row["ranking"]) == len(legal_placements(board_array(r.board), r.piece))
+    assert all(len(entry) == 3 for entry in row["ranking"])
+    values = [v for _, _, v in row["ranking"]]
+    assert values == sorted(values, reverse=True)
+    assert tuple(r.chosen) in {(rot, col) for rot, col, _ in row["ranking"]}
+    assert (row["turn"], row["run_id"], row["seed"]) == (r.turn, r.run_id, r.seed)
+
+
+def test_eval_row_ranking_is_the_oracle_ranking():
+    from tetris_agent.policy import Genome
+    from tetris_agent.quality import rank_placements
+
+    r, *_ = read_run(FIXTURE)[0]
+    row = eval_row(r, ply=2)
+    expected = rank_placements(board_array(r.board), r.piece, r.next_piece, Genome(), 2)
+    assert [(rot, col) for rot, col, _ in row["ranking"]] == [p for p, _ in expected]

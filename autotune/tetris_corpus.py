@@ -227,3 +227,28 @@ def sft_row(record: Record) -> dict:
             {"role": "assistant", "content": assistant},
         ]
     }
+
+
+GENOME_KEYS = ("w_lines", "w_agg_height", "w_holes", "w_bumpiness")
+
+
+def eval_row(record: Record, ply: int = 2) -> dict:
+    """A held-out row for tier-1: the prompt, the teacher's choice, and the oracle's
+    full ranking recomputed from the board — so the training job grades answers
+    with no tetris dependency of its own."""
+    from tetris_agent.policy import Genome
+    from tetris_agent.quality import rank_placements
+
+    genome = Genome(**{k: record.grade["genome"][k] for k in GENOME_KEYS})
+    ranked = rank_placements(
+        board_array(record.board), record.piece, record.next_piece, genome, ply
+    )
+    messages = sft_row(record)["messages"][:2]
+    return {
+        "run_id": record.run_id,
+        "seed": record.seed,
+        "turn": record.turn,
+        "messages": messages,
+        "teacher": list(record.chosen),
+        "ranking": [[rot, col, round(value, 6)] for (rot, col), value in ranked],
+    }
