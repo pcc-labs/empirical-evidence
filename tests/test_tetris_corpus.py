@@ -1,6 +1,13 @@
+from dataclasses import replace
 from pathlib import Path
 
-from autotune.tetris_corpus import read_run
+from autotune.tetris_corpus import (
+    EVAL_SEEDS,
+    TRAIN_SEED_MIN,
+    apply_filters,
+    read_run,
+    split,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tetris_run" / "20260904-000000-abcdef"
 
@@ -53,10 +60,75 @@ def test_read_run_parses_a_live_session_without_arm_fields(tmp_path):
     shutil.copytree(FIXTURE, run)
     lines = (run / "events.jsonl").read_text().splitlines()
     session = json.loads(lines[0])
-    session["data"] = {"phase": "start", "policy": "pi/gemma4:26b/features/off", "mode": "live", "level": 0, "timer_div": 7}
+    session["data"] = {
+        "phase": "start", "policy": "pi/gemma4:26b/features/off", "mode": "live",
+        "level": 0, "timer_div": 7,
+    }
     lines[0] = json.dumps(session)
     (run / "events.jsonl").write_text("\n".join(lines) + "\n")
     records, _ = read_run(run)
     r = records[0]
-    assert (r.model, r.harness, r.effort, r.seed, r.mode) == ("pi/gemma4:26b", "features", "off", 7, "live")
+    assert (r.model, r.harness, r.effort, r.seed, r.mode) == (
+        "pi/gemma4:26b", "features", "off", 7, "live",
+    )
     assert r.arm == "pi/gemma4:26b/features/off+fixed"  # from meta.json when the session has none
+
+
+def _records(n, *, run_id="r", seed=100, topped_out=False, chosen_value=-2.0, best_value=-1.0):
+    base, _ = read_run(FIXTURE)
+    proto = base[0]
+    out = []
+    for turn in range(1, n + 1):
+        out.append(
+            replace(
+                proto,
+                run_id=run_id,
+                turn=turn,
+                seed=seed,
+                grade={**proto.grade, "chosen_value": chosen_value, "best_value": best_value},
+                outcome={
+                    **proto.outcome, "pieces_placed": n, "topped_out": topped_out,
+                    "pieces_after": n - turn,
+                },
+            )
+        )
+    return out
+
+
+def test_death_spiral_drops_exactly_the_last_five_of_a_topped_out_run():
+    kept, dropped = apply_filters(_records(12, topped_out=True))
+    assert [r.turn for r in kept] == list(range(1, 8))
+    assert dropped == {"death_spiral": 5}
+
+
+def test_a_survived_run_keeps_every_decision():
+    kept, dropped = apply_filters(_records(12, topped_out=False))
+    assert len(kept) == 12 and dropped == {}
+
+
+def test_top_out_veto_drops_only_a_lethal_choice_with_a_survivable_alternative():
+    lethal = _records(1, run_id="a", chosen_value=-1e6, best_value=-3.5)
+    forced = _records(1, run_id="b", chosen_value=-1e6, best_value=-1e6)
+    fine = _records(1, run_id="c", chosen_value=-2.0, best_value=-1.0)
+    kept, dropped = apply_filters(lethal + forced + fine)
+    assert [r.run_id for r in kept] == ["b", "c"]
+    assert dropped == {"top_out_veto": 1}
+
+
+def test_fixture_run_after_filters():
+    records, _ = read_run(FIXTURE)
+    kept, dropped = apply_filters(records)
+    # 3 records, topped out: the last 5 are dropped -> nothing survives the spiral.
+    assert kept == [] and dropped == {"death_spiral": 3}
+
+
+def test_split_refuses_rows_on_the_wrong_side_of_the_seed_line():
+    train_ok = _records(2, seed=TRAIN_SEED_MIN)
+    valid_ok = _records(2, seed=EVAL_SEEDS[0])
+    stray = _records(2, seed=50)
+    train, valid, excluded = split(train_ok + valid_ok + stray)
+    assert {r.seed for r in train} == {TRAIN_SEED_MIN}
+    assert {r.seed for r in valid} == {EVAL_SEEDS[0]}
+    assert excluded == {"seed_out_of_pool": 2}
+    assert all(r.seed >= TRAIN_SEED_MIN for r in train)
+    assert all(r.seed in EVAL_SEEDS for r in valid)

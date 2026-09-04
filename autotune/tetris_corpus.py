@@ -15,10 +15,16 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from tetris_agent.quality import TOP_OUT_VALUE  # one source of truth for the lethal sentinel
+
 GRADE_KEYS = (
     "rank", "legal_count", "regret", "regret_norm", "best",
     "chosen_value", "best_value", "worst_value", "genome", "ply",
 )
+
+DEATH_SPIRAL = 5
+TRAIN_SEED_MIN = 100
+EVAL_SEEDS = (1, 2, 3, 4, 5)
 
 
 @dataclass(frozen=True)
@@ -138,3 +144,50 @@ def read_run(run_dir: Path) -> tuple[list[Record], Counter]:
             )
         )
     return records, exclusions
+
+
+def apply_filters(
+    records: list[Record], death_spiral: int = DEATH_SPIRAL
+) -> tuple[list[Record], Counter]:
+    """Outcome-based filters, plus the one oracle veto it is safe to make.
+
+    The grader (~490-level) is weaker than the teacher (530), so regret and rank
+    are never filters. The spiral rule drops the last `death_spiral` decisions of
+    a run that topped out; the veto drops a move that left the next piece nowhere
+    to go when a survivable move existed.
+    """
+    dropped: Counter = Counter()
+    by_run: dict[str, list[Record]] = {}
+    for r in records:
+        by_run.setdefault(r.run_id, []).append(r)
+
+    kept: list[Record] = []
+    for run_records in by_run.values():
+        run_records = sorted(run_records, key=lambda r: r.turn)
+        if run_records and run_records[0].outcome.get("topped_out"):
+            cut = max(0, len(run_records) - death_spiral)
+            dropped["death_spiral"] += len(run_records) - cut
+            run_records = run_records[:cut]
+        for r in run_records:
+            chosen_value = r.grade.get("chosen_value", 0.0)
+            best_value = r.grade.get("best_value", 0.0)
+            if chosen_value <= TOP_OUT_VALUE and best_value > TOP_OUT_VALUE:
+                dropped["top_out_veto"] += 1
+                continue
+            kept.append(r)
+    return kept, dropped
+
+
+def split(records: list[Record]) -> tuple[list[Record], list[Record], Counter]:
+    """Train rows come only from seeds >= TRAIN_SEED_MIN; validation rows only from EVAL_SEEDS."""
+    train: list[Record] = []
+    valid: list[Record] = []
+    excluded: Counter = Counter()
+    for r in records:
+        if r.seed >= TRAIN_SEED_MIN:
+            train.append(r)
+        elif r.seed in EVAL_SEEDS:
+            valid.append(r)
+        else:
+            excluded["seed_out_of_pool"] += 1
+    return train, valid, excluded
