@@ -26,6 +26,12 @@ mac = [
     "mlx-lm>=0.21",
 ]
 
+# The tetris benchmark, imported for its prompt renderer and grader so training
+# inputs are byte-identical to inference inputs. Sibling checkout, like pokemon-kafka.
+tetris = [
+    "tetris-agent",
+]
+
 [dependency-groups]
 dev = [
     "ruff",
@@ -52,6 +58,11 @@ explicit = true
 torch = [
   { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
 ]
+# Pinned to the tetris commit that added the board to placement_graded (tetris #18),
+# so the corpus builder imports exactly the prompt code that produced the rows, on any
+# machine, with no sibling checkout to keep in sync. For local sibling development swap
+# in `{ path = "../tetris", editable = true }` and relock.
+tetris-agent = { git = "https://github.com/pcc-labs/tetris.git", rev = "583f52585452ab6452bbca2c1cc92f0ea118ddca" }
 
 [tool.ruff]
 line-length = 100
@@ -73,6 +84,8 @@ omit = [
     "autotune/loop.py",
     "autotune/experiment.py",
     "autotune/march.py",
+    "autotune/tetris_rollout.py",
+    "autotune/tetris_package_job.py",
 ]
 
 [tool.coverage.report]
