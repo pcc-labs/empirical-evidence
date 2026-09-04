@@ -46,13 +46,32 @@ def bench_command(
     ]
 
 
-def proxy_command(project: str, listen: str, upstream: str) -> list[str]:
+def proxy_dsn() -> str:
+    """The Postgres DSN `tapes serve proxy` writes captures to.
+
+    `tapes serve proxy` exits immediately with `empty postgres dsn` unless it is
+    given one: it does not read `TAPES_PG_DSN` itself, and `~/.tapes/config.toml`
+    ships an empty `[storage]` section. Passing it explicitly is what makes the
+    proxy start at all.
+    """
+    dsn = os.environ.get("TAPES_PG_DSN", "")
+    if not dsn:
+        raise RuntimeError(
+            "TAPES_PG_DSN is unset — `tapes serve proxy` needs the Postgres DSN passed "
+            "explicitly (it exits with 'empty postgres dsn' otherwise). Export it, e.g. "
+            "TAPES_PG_DSN=postgres://tapes:tapes@127.0.0.1:5432/tapes?sslmode=disable"
+        )
+    return dsn
+
+
+def proxy_command(project: str, listen: str, upstream: str, dsn: str | None = None) -> list[str]:
     return [
         "tapes", "serve", "proxy",
         "--provider", "openai",
         "--upstream", upstream,
         "--listen", listen,
         "--project", project,
+        "--postgres", dsn if dsn is not None else proxy_dsn(),
     ]
 
 

@@ -8,6 +8,7 @@ from autotune.tetris_rollout import (
     postgres_up,
     proxy_answers,
     proxy_command,
+    proxy_dsn,
     turns_captured,
 )
 
@@ -229,3 +230,25 @@ def test_mint_creates_the_runs_dir_when_the_checkout_has_none(tmp_path):
     )
     assert [r["seed"] for r in rows] == [100]
     assert (runs / "mint-p.jsonl").is_file()
+
+
+def test_proxy_command_passes_the_postgres_dsn():
+    """`tapes serve proxy` exits with "empty postgres dsn" unless handed one --
+    it does not read TAPES_PG_DSN itself and ~/.tapes/config.toml ships an empty
+    [storage]. Without this flag the proxy never starts and every game would be
+    refused as uncaptured."""
+    cmd = proxy_command("p", "127.0.0.1:8092", "http://127.0.0.1:11434", dsn="postgres://x/y")
+    assert cmd[cmd.index("--postgres") + 1] == "postgres://x/y"
+
+
+def test_proxy_dsn_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("TAPES_PG_DSN", "postgres://tapes:tapes@127.0.0.1:5432/tapes")
+    assert proxy_dsn() == "postgres://tapes:tapes@127.0.0.1:5432/tapes"
+    cmd = proxy_command("p", "127.0.0.1:8092", "http://127.0.0.1:11434")
+    assert cmd[cmd.index("--postgres") + 1] == "postgres://tapes:tapes@127.0.0.1:5432/tapes"
+
+
+def test_proxy_dsn_refuses_when_unset(monkeypatch):
+    monkeypatch.delenv("TAPES_PG_DSN", raising=False)
+    with pytest.raises(RuntimeError, match="TAPES_PG_DSN"):
+        proxy_dsn()
