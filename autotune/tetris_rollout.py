@@ -107,7 +107,13 @@ def mint(
                 bench_command(seed, model=model, max_pieces=max_pieces),
                 cwd=str(tetris_dir), env=env, check=True,
             )
-            for name in sorted(_run_dirs(runs_dir) - before):
+            new_dirs = sorted(_run_dirs(runs_dir) - before)
+            if not new_dirs:
+                raise RuntimeError(
+                    f"seed {seed} completed without recording a run — no new run directory "
+                    f"appeared under {runs_dir}. Refusing to lose it silently."
+                )
+            for name in new_dirs:
                 meta_path = runs_dir / name / "meta.json"
                 label = (
                     json.loads(meta_path.read_text()).get("label", "")

@@ -85,3 +85,27 @@ def test_mint_records_the_new_run_dirs_with_their_seed(tmp_path):
     assert seen_env["TETRIS_TAPES_OLLAMA_URL"] == "http://127.0.0.1:8092/v1"
     manifest = [json.loads(x) for x in (runs / "mint-p.jsonl").read_text().splitlines()]
     assert manifest == rows
+
+
+def test_mint_refuses_a_seed_that_completes_without_a_new_run_dir(tmp_path):
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    terminated = []
+
+    class FakeProc:
+        def terminate(self):
+            terminated.append(True)
+
+        def wait(self, timeout=None):
+            pass
+
+    def fake_run(cmd, cwd=None, env=None, check=True, **kw):
+        pass  # completes "successfully" but writes no run directory
+
+    with pytest.raises(RuntimeError, match="100"):
+        mint(
+            [100], tetris_dir=tmp_path, model="pi/gemma4:26b", max_pieces=10, project="p",
+            proxy_listen="127.0.0.1:8092", upstream="http://127.0.0.1:11434",
+            run=fake_run, popen=lambda *a, **k: FakeProc(), answers=lambda url, timeout_s=2.0: True,
+        )
+    assert terminated == [True]  # proxy still torn down on this raise path
