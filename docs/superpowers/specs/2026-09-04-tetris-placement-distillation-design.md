@@ -303,11 +303,14 @@ under `hf jobs uv run`:
 A second job (`cpu-xl` suffices): merge the adapter into the base, convert with llama.cpp's
 `convert_hf_to_gguf.py`, quantize to **Q4_K_M** — the same quant the baseline `gemma4:latest`
 is served at, so the comparison measures training and not quantization — and push the GGUF to
-the same model repo. On this box: `ollama pull hf.co/bdougie/gemma-4-E4B-tetris-lora:Q4_K_M`,
-tag it `gemma4-e4b-tetris:<corpus_id>`, and list it in both `~/.pi/agent/models.json`
-(with `thinkingLevelMap.off = "none"`, as every local entry) and `tetris/pricing.MODELS`
-(`supports_effort=True`). An unlisted tag is deliberately effort-free in tetris and would run
-with thinking on — the 09-04 E4B mis-run was exactly that.
+the same model repo, one GGUF per corpus. On this box: `scripts/deploy_gguf.sh <corpus_id>` —
+not `ollama pull hf.co/<repo>:Q4_K_M`, which selects by quant tag alone and, from the second
+corpus onward, resolves *some* Q4_K_M file in the repo rather than this one. The script
+downloads the named file, `ollama create`s it as `gemma4-e4b-tetris:<corpus_id>`, and lists it
+in `~/.pi/agent/models.json` (with `thinkingLevelMap.off = "none"`, as every local entry); it
+still has to be added by hand to `tetris/pricing.MODELS` (`supports_effort=True`). An unlisted
+tag is deliberately effort-free in tetris and would run with thinking on — the 09-04 E4B
+mis-run was exactly that.
 
 ## The gate — two tiers
 

@@ -33,6 +33,21 @@ def sh(*cmd: str, cwd: str | None = None) -> None:
     subprocess.run(list(cmd), cwd=cwd, check=True)
 
 
+def deploy_instruction(adapter_repo: str, corpus_id: str) -> str:
+    """The line printed after upload, naming the unambiguous deploy step.
+
+    `ollama pull hf.co/<repo>:Q4_K_M` selects by quant tag alone: the repo holds
+    one GGUF per corpus, so from the second corpus onward it resolves *some*
+    Q4_K_M file, not necessarily this one, and `ollama cp` would label it as the
+    requested corpus regardless. `scripts/deploy_gguf.sh` names the file by
+    corpus id instead.
+    """
+    return (
+        f"[package_job] on the box: scripts/deploy_gguf.sh {corpus_id}  # pulls the "
+        f"{corpus_id} GGUF from {adapter_repo} by name, not by quant tag alone"
+    )
+
+
 def main() -> int:  # pragma: no cover - CPU/subprocess driver, exercised by the smoke job
     import torch
     from huggingface_hub import HfApi, snapshot_download
@@ -113,10 +128,7 @@ def main() -> int:  # pragma: no cover - CPU/subprocess driver, exercised by the
         commit_message=f"Q4_K_M GGUF for corpus {corpus_id}",
     )
     print(f"[package_job] uploaded {adapter_repo}/gguf/{quant}")
-    print(
-        f"[package_job] on the box: ollama pull hf.co/{adapter_repo}:Q4_K_M && "
-        f"ollama cp hf.co/{adapter_repo}:Q4_K_M gemma4-e4b-tetris:{corpus_id}"
-    )
+    print(deploy_instruction(adapter_repo, corpus_id))
     return 0
 
 
