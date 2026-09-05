@@ -453,6 +453,7 @@ DOMAINS = (
     "handoff",
     "puzzle-consult",
     "gate-text",
+    "npc-dialogue",
 )
 
 
@@ -683,6 +684,7 @@ def _run(args, rng: random.Random, genome_label: str, memlog: MemLog) -> int:
     rollout_roots = args.rollouts or [Path("out/rollouts"), Path("out/harvest")]
 
     from autotune import handoff_corpus as ho
+    from autotune import npc_corpus as npc
 
     expedition, ho_skipped = ho.load_expedition_events(
         args.pk_root / "data" / "telemetry" / "game", memlog=memlog, since=args.since
@@ -704,6 +706,10 @@ def _run(args, rng: random.Random, genome_label: str, memlog: MemLog) -> int:
         ("handoffs", lambda: handoffs),
         ("gen_puzzle_consult", lambda: ho.gen_puzzle_consult(expedition, learnings)),
         ("gen_gate_text", lambda: ho.gen_gate_text(expedition)),
+        (
+            "gen_npc_dialogue",
+            lambda: npc.gen_npc_dialogue(expedition, *npc.load_truth(args.pk_root)),
+        ),
     )
     for name, gen in generators:
         rows = gen()

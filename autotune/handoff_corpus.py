@@ -47,6 +47,9 @@ WANTED_EVENTS = frozenset(
         "milestone",
         "discovery",
         "refusal",
+        # the npc-dialogue domain attributes a talk-started fight to its body
+        "battle.outcome",
+        "battle.fled",
     }
 )
 
@@ -156,6 +159,12 @@ GATES: tuple[tuple[str, str, str], ...] = (
         "CUT only clears a 0x3D bush; stand adjacent to the bush and face it before using the move",
     ),
     (
+        "badge_gate",
+        r"only if you have the \w+BADGE",
+        "the badge the guard names, won at its gym; the guard reads the trainer card, nothing "
+        "else opens the way",
+    ),
+    (
         "stale_window_text",
         r"hope to see you again",
         "not a gate: the shop's farewell left on the sticky window layer; a text box blocks "
@@ -193,10 +202,7 @@ def load_expedition_events(
                 m = _EVENT_RE.search(line)
                 if not m or m.group(1) not in WANTED_EVENTS:
                     continue
-                if m.group(1) in (
-                    "supervisor.body_engaged",
-                    "refusal",
-                ) and not _GATE_PREFILTER.search(line):
+                if m.group(1) == "refusal" and not _GATE_PREFILTER.search(line):
                     continue
                 try:
                     d = json.loads(line)

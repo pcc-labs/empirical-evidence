@@ -17,6 +17,11 @@ SEATS: tuple[tuple[str, str, str], ...] = (
     ("Wheelman", "battle-action", "next action from a won battle's turns"),
     ("Extractor", "puzzle-consult", "menu choice at a wall, labelled by what the engine returned"),
     ("Forger", "gate-text", "the game's refusal sentence -> the gate class and what clears it"),
+    (
+        "Forger",
+        "npc-dialogue",
+        "where a body stands and what it said -> what it is and what the talk yields",
+    ),
     ("Operator", "handoff", "the supervisor's exhaustion facts -> what the human measured and did"),
     ("Narrator", "narrator", "one-sentence play-by-play for the overlay"),
     ("Genome", "genome", "above-median rollout genomes per scenario"),
