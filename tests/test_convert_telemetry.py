@@ -248,6 +248,8 @@ def test_end_to_end_snapshot(tmp_path):
         "42",
         "--min-total",
         "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
     ]
     r1 = subprocess.run(cmd, capture_output=True, text=True)
     assert r1.returncode == 0, r1.stderr
@@ -365,6 +367,8 @@ def test_memory_budget_aborts_cleanly_with_a_trail(tmp_path):
         str(tmp_path / "sft"),
         "--min-total",
         "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
         "--max-rss-gb",
         "0.001",
     ]
@@ -375,6 +379,23 @@ def test_memory_budget_aborts_cleanly_with_a_trail(tmp_path):
     rows = [json.loads(x) for x in (tmp_path / "sft" / "memlog.jsonl").read_text().splitlines()]
     assert rows[0]["phase"] == "start" and rows[-1]["phase"] == "abort"
     assert rows[-1]["rss_gb"] > 0.001
+
+
+def test_recorder_runs_load_like_any_root(tmp_path):
+    run = tmp_path / "runs" / "20260905-000000-abcd"
+    run.mkdir(parents=True)
+    row = {
+        "event_type": "battle_outcome",
+        "turn": 3,
+        "occurred_at": "2026-09-05T00:00:01Z",
+        "run_id": "20260905-000000-abcd",
+        "data": {"user_species": "Gyarados", "won": True},
+    }
+    (run / "events.jsonl").write_text(json.dumps(row) + "\n")
+    events, skipped = load_events([tmp_path / "runs", tmp_path / "missing"])
+    assert skipped == 0
+    assert [e["run_id"] for e in events] == ["20260905-000000-abcd"]
+    assert events[0]["_file"] == "events"
 
 
 def test_memory_trail_is_written_on_success(tmp_path):
@@ -394,6 +415,8 @@ def test_memory_trail_is_written_on_success(tmp_path):
         str(tmp_path / "sft"),
         "--min-total",
         "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
         "--max-rss-gb",
         "0",
         "--mem-log",

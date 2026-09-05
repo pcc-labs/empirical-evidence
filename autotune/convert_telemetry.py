@@ -617,6 +617,13 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(__file__).with_name("handoff_resolutions.json"),
         help="curated operator resolutions for the handoff domain",
     )
+    p.add_argument(
+        "--pk-runs",
+        type=Path,
+        default=None,
+        help="pokemon-kafka recorder output (runs/<run_id>/events.jsonl): where supervisor-driven "
+        "fights land their battle rows. Default: <pk-root>/runs",
+    )
     p.add_argument("--out", type=Path, default=Path("data/sft_v4"))
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
@@ -670,7 +677,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args, rng: random.Random, genome_label: str, memlog: MemLog) -> int:
-    events, skipped = load_events([args.pk_data, args.ee_data], memlog=memlog, since=args.since)
+    roots = [args.pk_data, args.ee_data, args.pk_runs or args.pk_root / "runs"]
+    events, skipped = load_events(roots, memlog=memlog, since=args.since)
     memlog.log("load_events", events=len(events), skipped=skipped)
     rollout_roots = args.rollouts or [Path("out/rollouts"), Path("out/harvest")]
 
