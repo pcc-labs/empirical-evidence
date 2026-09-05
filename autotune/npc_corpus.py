@@ -30,6 +30,9 @@ LEG_START = "supervisor.leg_start"
 FIGHTS = ("battle.outcome", "battle.fled")
 FIGHT_WINDOW_S = 5.0  # the talk starts the fight; its outcome row lands just before the engage row
 STALE_MIN_CELLS = 3  # one sentence read at this many cells of one run is the window, not the body
+# Reads that are not the body's words: the START menu the engage loop opens on an item-ball tile
+# (measured on maps 194, 219, 234) and the battle text pinned after a flee.
+NOISE = frozenset({"OPTION EXIT", "Got away safely!"})
 BODIES = ("trainer", "npc", "item", "unknown")
 OUTCOMES = ("talk", "handed", "fought-won", "fought-lost", "fled", "gate", "blocker", "stale")
 
@@ -122,6 +125,8 @@ def gen_npc_dialogue(events: list[dict], sprites: dict, items: dict) -> list[dic
         cur_map[run] = int(mp)
         sentence = clean_said(e.get("said") or "")
         gained = [items.get(str(i), f"#{i}") for i, _q in (e.get("gained") or [])]
+        if sentence in NOISE:
+            sentence = ""
         if not sentence and not gained:
             continue
         sprite = sprites.get((int(mp), int(x), int(y))) or {}

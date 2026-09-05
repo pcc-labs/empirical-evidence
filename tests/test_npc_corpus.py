@@ -57,7 +57,7 @@ def _events():
             "event": "battle.fled",
             "pos": [26, 2, 2],
         },
-        _engage(55, (2, 2), "Got away safely!"),
+        _engage(55, (2, 2), "Come back and fight me!"),
         _engage(56, (3, 3), "You can pass here only if you have the EARTHBADGE!"),
         {
             "ts": "2026-09-05T16:46:57+00:00",
@@ -77,6 +77,7 @@ def _events():
         _engage(59, (6, 5), "Cell Separation System!"),
         _engage(59, (7, 5), "Cell Separation System!"),
         _engage(59, (8, 8), " | "),
+        _engage(59, (8, 9), "OPTION EXIT"),
         {
             "ts": "2026-09-05T16:46:59+00:00",
             "run_id": "r2",
@@ -146,6 +147,7 @@ def test_outcomes_are_measured_from_the_run():
     assert {by_cell[(26, x, 5)]["outcome"] for x in (5, 6, 7)} == {"stale"}
     assert by_cell[(26, 9, 9)]["outcome"] == "talk"
     assert (26, 8, 8) not in by_cell  # empty read, nothing gained: no row
+    assert (26, 8, 9) not in by_cell  # the START menu read on an item-ball tile: noise, no row
     assert all(r["domain"] == NPC_DOMAIN for r in rows)
     assert all(json.loads(r["messages"][2]["content"])["outcome"] in OUTCOMES for r in rows)
     assert len(rows) == 12
