@@ -556,8 +556,36 @@ def classify_gate(text: str) -> tuple[str, str] | None:
     return None
 
 
+UNCLASSIFIED = "unclassified"
+UNCLASSIFIED_CLEARS = (
+    "not measured yet: this sentence is not a known gate; talk to the body facing the step, read "
+    "its whole sentence, and record what clears it before acting on a guess"
+)
+UNCLASSIFIED_CAP = (
+    3  # rows per distinct unknown sentence: the reflex is the lesson, not the sentence
+)
+REFUSAL_EVENTS = ("supervisor.gate_text", "refusal")  # a step the walk refused with text on screen
+
+
+def _is_prose(sentence: str) -> bool:
+    letters = sum(ch.isalpha() for ch in sentence)
+    return letters >= 6 and letters >= len(sentence) // 2
+
+
 def gen_gate_text(events: list[dict]) -> list[dict]:
+    """gate-text rows: every refusal sentence with a measured class, and — capped — the refusals
+    the class table does not know, labelled ``unclassified``.
+
+    The unknown rows exist because of a measured failure (lane 33, 2026-09-07): on a guard
+    sentence no row had covered, the adapter named its nearest known class and ran away. Every
+    training row had a known class, so the model had never seen the answer "not one I know".
+    A refused step whose sentence is new should say so and send the crew to measure, which is
+    the discovery reflex the seat is for. Only refused steps qualify (a body's ordinary line is
+    not a gate), prose only (the window's digit garbage is not a sentence), and at most
+    UNCLASSIFIED_CAP rows per distinct sentence so the reflex does not drown the classes.
+    """
     out: list[dict] = []
+    unknown_seen: dict[str, int] = {}
     for e in events:
         kind = e.get("event")
         if kind not in (
@@ -571,7 +599,13 @@ def gen_gate_text(events: list[dict]) -> list[dict]:
         text = e.get("said") or e.get("text") or ""
         hit = classify_gate(text)
         if not hit:
-            continue
+            if kind not in REFUSAL_EVENTS or not text:
+                continue
+            unknown = max((s.strip() for s in text.split("|")), key=len)
+            if not _is_prose(unknown) or unknown_seen.get(unknown, 0) >= UNCLASSIFIED_CAP:
+                continue
+            unknown_seen[unknown] = unknown_seen.get(unknown, 0) + 1
+            hit = (UNCLASSIFIED, UNCLASSIFIED_CLEARS)
         cls, clears = hit
         # The screen decoder repeats a growing sentence; keep its longest clause.
         sentence = max((s.strip() for s in text.split("|")), key=len)
