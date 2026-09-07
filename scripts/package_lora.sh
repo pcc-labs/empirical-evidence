@@ -13,6 +13,18 @@ LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/code/llama.cpp}"
 BASE_MODEL="${BASE_MODEL:-HuggingFaceTB/SmolLM3-3B}"
 OUT="out/package/$NAME"; mkdir -p "$OUT"
 
+# A retrained adapter must not ship under a stale merge: if the adapter is newer than the last
+# merge (or the GGUFs), throw the old outputs away. Measured 2026-09-07: the v6 Forger was
+# uploaded and registered from the morning's v5 GGUF because every file already existed.
+if [[ -f "$ADAPTER/adapter_model.safetensors" ]]; then
+  for stale in "$OUT/merged/model.safetensors" "$OUT/merged/model.safetensors.index.json" "$OUT/$NAME-f16.gguf" "$OUT/$NAME.Q4_K_M.gguf"; do
+    if [[ -f "$stale" && "$ADAPTER/adapter_model.safetensors" -nt "$stale" ]]; then
+      echo "adapter is newer than $stale: rebuilding the merge and the GGUFs"
+      rm -rf "$OUT/merged" "$OUT/$NAME-f16.gguf" "$OUT/$NAME.Q4_K_M.gguf"
+      break
+    fi
+  done
+fi
 if [[ ! -f "$OUT/merged/model.safetensors" && ! -f "$OUT/merged/model.safetensors.index.json" ]]; then
   echo "==> merging $ADAPTER into $BASE_MODEL"
   uv run python - "$ADAPTER" "$OUT/merged" "$BASE_MODEL" <<'PY'
