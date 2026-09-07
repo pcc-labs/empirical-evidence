@@ -5,11 +5,14 @@ import random
 from pathlib import Path
 
 from autotune.convert_telemetry import (
+    EXIT_MEMORY_BUDGET,
     NARRATOR_TEMPLATES,
+    WANTED_EVENT_TYPES,
     balance,
     chat,
     damage_bucket,
     dedupe,
+    drop_unresolved,
     gen_battle_action,
     gen_battle_outcome,
     gen_genome,
@@ -19,6 +22,7 @@ from autotune.convert_telemetry import (
     load_events,
     split,
 )
+from autotune.memlog import MemLog
 
 FIXTURES = Path(__file__).parent / "fixtures" / "convert"
 
@@ -121,6 +125,29 @@ def test_gen_battle_action_only_won_battles_and_cap():
     assert gen_battle_action(events, random.Random(42), cap=1)[0] in examples
 
 
+def test_gen_battle_action_skips_lean_turns(capsys):
+    full = {
+        "player_species": "A",
+        "player_level": 5,
+        "player_hp": 9,
+        "player_max_hp": 10,
+        "enemy_species": "B",
+        "enemy_level": 3,
+        "enemy_hp": 4,
+        "enemy_max_hp": 8,
+        "action": '{"action": "fight", "move": "TACKLE"}',
+    }
+    lean = {"player_hp": 9, "player_max_hp": 10, "enemy_hp": 4, "enemy_max_hp": 8, "action": "{}"}
+    events = [
+        {"event_type": "battle", "turn": 1, "_file": "f", "data": lean},
+        {"event_type": "battle", "turn": 2, "_file": "f", "data": full},
+        {"event_type": "battle_outcome", "turn": 3, "_file": "f", "data": {"won": True}},
+    ]
+    out = gen_battle_action(events, random.Random(0))
+    assert len(out) == 1 and "your Pokemon A (lv 5)" in out[0]["messages"][1]["content"]
+    assert "skipped 1 turns" in capsys.readouterr().err
+
+
 def test_gen_genome_keeps_above_median():
     examples = gen_genome([FIXTURES / "rollouts"])
     # median battles_won = 3 -> rollout-0 (5) and rollout-2 (3) kept, rollout-1 (2) dropped
@@ -149,6 +176,18 @@ def test_gen_narrator_deterministic():
 
 def _mk(domain, n):
     return [chat("s", f"u{domain}{i}", f"a{i}", domain) for i in range(n)]
+
+
+def test_drop_unresolved_species_rows():
+    rows = [
+        chat("s", "Your Pokemon Charmander (lv 5) vs enemy #6B (lv 7).", "a", "battle-outcome"),
+        chat("s", "Charmander uses EMBER against Pidgey.", "a", "move-choice"),
+        chat("s", '{"enemy_species": "#A9", "result": "won"}', "a", "narrator"),
+        chat("s", "hole tile 0x22 on map 12; anchor #12345 stays", "a", "handoff"),
+    ]
+    kept, dropped = drop_unresolved(rows)
+    assert [r["domain"] for r in kept] == ["move-choice", "handoff"]
+    assert dropped == {"battle-outcome": 1, "narrator": 1}
 
 
 def test_dedupe_drops_exact_pairs():
@@ -209,6 +248,8 @@ def test_end_to_end_snapshot(tmp_path):
         "42",
         "--min-total",
         "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
     ]
     r1 = subprocess.run(cmd, capture_output=True, text=True)
     assert r1.returncode == 0, r1.stderr
@@ -219,6 +260,176 @@ def test_end_to_end_snapshot(tmp_path):
     assert h1 == h2
     train = [json.loads(x) for x in (tmp_path / "sft" / "train.jsonl").read_text().splitlines()]
     assert all("domain" not in row for row in train)
+    stats = json.loads((tmp_path / "sft" / "stats.json").read_text())
+    assert set(stats["vintage"]) == {"min", "max", "stamped"}  # fixtures carry no timestamps
+    assert (tmp_path / "sft" / "README.md").read_text().startswith("---")
+
+
+def test_load_events_drops_unread_event_types_before_parsing(tmp_path):
+    lines = [
+        '{"event_type":"decision","turn":1,"data":{"a":1}}',
+        '{"event_type": "agent_state", "turn": 1}',
+        '{"event_type":"battle_outcome","turn":2,"data":{"won":true}}',
+        '{"type":"legacy","turn":3}',
+        "not json at all {",
+        "42",
+        "[1, 2]",
+    ]
+    (tmp_path / "x.jsonl").write_text("\n".join(lines) + "\n")
+    m = MemLog(None, stream=None)
+    events, skipped = load_events([tmp_path], memlog=m)
+    assert [e.get("event_type", e.get("type")) for e in events] == ["battle_outcome", "legacy"]
+    assert skipped == 3  # unparseable, bare int, bare list
+    assert m.kept_by_file == {str(tmp_path / "x.jsonl"): 2}
+    # every generator's event type is in the allow-list, so nothing it reads is dropped
+    assert {
+        "battle_outcome",
+        "move_result",
+        "battle",
+        "milestone",
+        "map_change",
+        "discovery",
+        "battle_end",
+    } <= WANTED_EVENT_TYPES
+
+
+def test_since_drops_older_events_on_the_raw_line(tmp_path):
+    lines = [
+        '{"event_type":"battle_outcome","occurred_at":"2026-06-29T01:00:00Z","data":{}}',
+        '{"event_type":"battle_outcome","occurred_at":"2026-08-15T00:00:00Z","data":{}}',
+        '{"event_type":"battle_outcome","data":{}}',
+    ]
+    (tmp_path / "2026-08-22.jsonl").write_text("\n".join(lines) + "\n")
+    events, _ = load_events([tmp_path], since="2026-08-15")
+    assert [e.get("occurred_at") for e in events] == ["2026-08-15T00:00:00Z", None]
+    assert len(load_events([tmp_path])[0]) == 3
+
+
+def test_rows_carry_provenance():
+    e = {
+        "event_type": "battle_outcome",
+        "_file": "2026-08-22",
+        "occurred_at": "2026-08-20T10:00:00Z",
+        "run_id": "r1",
+        "game": "yellow",
+        "data": {
+            "user_species": "A",
+            "user_level": 5,
+            "user_hp_start": 9,
+            "user_max_hp": 10,
+            "user_move_types": ["Normal"],
+            "enemy_species": "B",
+            "enemy_level": 3,
+            "enemy_type": "Bug",
+            "level_gap": 2,
+            "had_healing": False,
+            "won": True,
+        },
+    }
+    (row,) = gen_battle_outcome([e])
+    assert row["meta"] == {
+        "file": "2026-08-22",
+        "occurred_at": "2026-08-20T10:00:00Z",
+        "run_id": "r1",
+        "game": "yellow",
+    }
+    assert "meta" not in chat("s", "u", "a", "d")
+
+
+def test_load_events_records_one_memory_line_per_file():
+    m = MemLog(None, stream=None)
+    events, _ = load_events([FIXTURES / "game"], memlog=m)
+    phases = [r for r in _drain(m)]
+    assert phases == []  # in-process only: nothing on disk, nothing echoed
+    kept = {Path(k).stem: v for k, v in m.kept_by_file.items()}
+    assert kept == {"2026-06-28": 3, "actions": 5, "moves": 2, "narrate": 3}
+    assert sum(kept.values()) == len(events)
+    assert m.count == 1 + 4 + 1  # start + one per file + one per root
+
+
+def _drain(m):
+    return [] if m.path is None else m.path.read_text().splitlines()
+
+
+def test_memory_budget_aborts_cleanly_with_a_trail(tmp_path):
+    import subprocess
+    import sys
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "autotune.convert_telemetry",
+        "--pk-data",
+        str(FIXTURES / "game"),
+        "--rollouts",
+        str(FIXTURES / "rollouts"),
+        "--out",
+        str(tmp_path / "sft"),
+        "--min-total",
+        "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
+        "--max-rss-gb",
+        "0.001",
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == EXIT_MEMORY_BUDGET, r.stderr
+    assert "memory budget exceeded" in r.stderr
+    assert not (tmp_path / "sft" / "corpus.jsonl").exists()
+    rows = [json.loads(x) for x in (tmp_path / "sft" / "memlog.jsonl").read_text().splitlines()]
+    assert rows[0]["phase"] == "start" and rows[-1]["phase"] == "abort"
+    assert rows[-1]["rss_gb"] > 0.001
+
+
+def test_recorder_runs_load_like_any_root(tmp_path):
+    run = tmp_path / "runs" / "20260905-000000-abcd"
+    run.mkdir(parents=True)
+    row = {
+        "event_type": "battle_outcome",
+        "turn": 3,
+        "occurred_at": "2026-09-05T00:00:01Z",
+        "run_id": "20260905-000000-abcd",
+        "data": {"user_species": "Gyarados", "won": True},
+    }
+    (run / "events.jsonl").write_text(json.dumps(row) + "\n")
+    events, skipped = load_events([tmp_path / "runs", tmp_path / "missing"])
+    assert skipped == 0
+    assert [e["run_id"] for e in events] == ["20260905-000000-abcd"]
+    assert events[0]["_file"] == "events"
+
+
+def test_memory_trail_is_written_on_success(tmp_path):
+    import subprocess
+    import sys
+
+    trail = tmp_path / "elsewhere" / "trail.jsonl"
+    cmd = [
+        sys.executable,
+        "-m",
+        "autotune.convert_telemetry",
+        "--pk-data",
+        str(FIXTURES / "game"),
+        "--rollouts",
+        str(FIXTURES / "rollouts"),
+        "--out",
+        str(tmp_path / "sft"),
+        "--min-total",
+        "5",
+        "--pk-runs",
+        str(tmp_path / "no-runs"),
+        "--max-rss-gb",
+        "0",
+        "--mem-log",
+        str(trail),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    phases = [json.loads(x)["phase"] for x in trail.read_text().splitlines()]
+    assert phases[0] == "start" and phases[-1] == "write_corpus"
+    assert phases.count("load_events.file") == 4
+    for p in ("load_events", "gen_battle_outcome", "dedupe", "balance", "split"):
+        assert p in phases
+    assert any(line.startswith("[convert] load_events.file") for line in r.stderr.splitlines())
 
 
 # ---------------------------------------------------------------------------

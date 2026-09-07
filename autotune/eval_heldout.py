@@ -1,8 +1,13 @@
 """Held-out eval gate: tuned model must beat base SmolLM3-3B on ground-truth domains.
 
-Scores battle-outcome (win-field accuracy) and move-choice (move/bucket-field accuracy) on
-data/sft_v3/valid.jsonl. ``parse_json_answer``/``score_rows`` are pure and unit-tested; the
-generation loop is a GPU wrapper exercised manually (like train_sft/package).
+Scores the two battle domains (battle-outcome: win-field accuracy; move-choice: move/bucket-field
+accuracy) and the Forger's two domains (npc-dialogue: body and outcome field accuracy, scored
+separately; gate-text: gate field accuracy) on data/sft_v4/valid.jsonl. npc-dialogue's outcome
+also gets a majority baseline -- the accuracy of always answering the most common outcome in the
+valid rows -- which the tuned score has to beat, since "talk" alone is right most of the time.
+
+``parse_json_answer``/``score_rows``/``majority_baseline``/``gate_passed`` are pure and
+unit-tested; the generation loop is a GPU wrapper exercised manually (like train_sft/package).
 """
 
 from __future__ import annotations
@@ -11,21 +16,48 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
-GATED_DOMAINS = ("battle-outcome", "move-choice")
+BATTLE_DOMAINS = ("battle-outcome", "move-choice")
+FORGER_DOMAINS = ("npc-dialogue", "gate-text")
+GATED_DOMAINS = BATTLE_DOMAINS + FORGER_DOMAINS
+
+# Metric name -> (domain, answer field). Battle domains score one metric named after the domain
+# (first of win/move/bucket present in the expected answer); the Forger domains score named
+# fields separately so a body read and an outcome read are reported apart.
+FIELD_METRICS: dict[str, tuple[str, str]] = {
+    "npc-dialogue/body": ("npc-dialogue", "body"),
+    "npc-dialogue/outcome": ("npc-dialogue", "outcome"),
+    "gate-text/gate": ("gate-text", "gate"),
+}
+# Metrics whose tuned score must beat the always-answer-the-mode baseline, not just the base.
+BASELINE_METRICS = ("npc-dialogue/outcome",)
+
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+_DECODER = json.JSONDecoder()
 
 
 def parse_json_answer(text: str) -> dict | None:
-    """First {...} object in text, or None."""
+    """First {...} object in text, or None.
+
+    Decodes from the first brace so nested values (``"items": [...]``, an inner object) survive;
+    falls back to the flat-object scan when that brace is not JSON.
+    """
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = _DECODER.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        return obj if isinstance(obj, dict) else None
     m = _JSON_RE.search(text)
     if not m:
         return None
     try:
-        return json.loads(m.group(0))
+        obj = json.loads(m.group(0))
     except json.JSONDecodeError:
         return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _match(expected: dict, got: dict | None) -> bool:
@@ -37,8 +69,22 @@ def _match(expected: dict, got: dict | None) -> bool:
     return False
 
 
+def _row_metrics(domain: str, expected: dict, got: dict | None) -> dict[str, bool]:
+    """Metric hits for one row: battle domains score one metric, Forger domains one per field."""
+    if domain in BATTLE_DOMAINS:
+        return {domain: _match(expected, got)}
+    return {
+        metric: got is not None and expected.get(field) == got.get(field)
+        for metric, (d, field) in FIELD_METRICS.items()
+        if d == domain
+    }
+
+
 def score_rows(rows: list[dict], predict) -> dict[str, float]:
-    """Accuracy per gated domain. ``predict(system, user) -> str``."""
+    """Accuracy per gated metric. ``predict(system, user) -> str``.
+
+    Keys are the domain for battle domains and ``domain/field`` for the Forger domains.
+    """
     hits: dict[str, list[bool]] = {}
     for row in rows:
         domain = row.get("domain")
@@ -47,8 +93,57 @@ def score_rows(rows: list[dict], predict) -> dict[str, float]:
         system, user = row["messages"][0]["content"], row["messages"][1]["content"]
         expected = json.loads(row["messages"][2]["content"])
         got = parse_json_answer(predict(system, user))
-        hits.setdefault(domain, []).append(_match(expected, got))
-    return {d: sum(v) / len(v) for d, v in hits.items()}
+        for metric, hit in _row_metrics(domain, expected, got).items():
+            hits.setdefault(metric, []).append(hit)
+    return {m: sum(v) / len(v) for m, v in hits.items()}
+
+
+def row_counts(rows: list[dict]) -> dict[str, int]:
+    """Gated rows per domain (what each metric's denominator is)."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        domain = row.get("domain")
+        if domain in GATED_DOMAINS:
+            counts[domain] = counts.get(domain, 0) + 1
+    return counts
+
+
+def majority_baseline(rows: list[dict], domain: str, field: str) -> dict | None:
+    """Accuracy of always answering the most common ``field`` value among ``domain`` rows.
+
+    Returns ``{"label", "accuracy", "n"}`` or None when the domain has no rows. Ties break on
+    first appearance.
+    """
+    counts: dict = {}
+    n = 0
+    for row in rows:
+        if row.get("domain") != domain:
+            continue
+        value = json.loads(row["messages"][2]["content"]).get(field)
+        counts[value] = counts.get(value, 0) + 1
+        n += 1
+    if not n:
+        return None
+    label = max(counts, key=counts.__getitem__)
+    return {"label": label, "accuracy": counts[label] / n, "n": n}
+
+
+def majority_baselines(rows: list[dict]) -> dict[str, dict]:
+    """``majority_baseline`` for every metric in BASELINE_METRICS that has rows."""
+    out = {}
+    for metric in BASELINE_METRICS:
+        domain, field = FIELD_METRICS[metric]
+        baseline = majority_baseline(rows, domain, field)
+        if baseline is not None:
+            out[metric] = baseline
+    return out
+
+
+def gate_passed(base: dict[str, float], tuned: dict[str, float], baselines: dict) -> bool:
+    """Tuned must match or beat base on every scored metric and beat each majority baseline."""
+    if any(tuned.get(m, 0) < base.get(m, 0) for m in set(base) | set(tuned)):
+        return False
+    return all(tuned.get(m, 0) > b["accuracy"] for m, b in baselines.items())
 
 
 def game_label_of(row: dict) -> str:
@@ -62,14 +157,15 @@ def game_label_of(row: dict) -> str:
 
 
 def score_rows_by_game(rows: list[dict], predict) -> dict[str, dict[str, float]]:
-    """Gated-domain accuracy split by the game each prompt names.
+    """Battle-domain accuracy split by the game each prompt names.
 
     Returns ``{game: {"accuracy": float, "n": count}}``. Lets the eval show the model
-    conditioning on Yellow/Blue prompts, not just aggregate Red-dominated numbers.
+    conditioning on Yellow/Blue prompts, not just aggregate Red-dominated numbers. The Forger
+    domains are single-game and per-field, so they stay out of this split.
     """
     hits: dict[str, list[bool]] = {}
     for row in rows:
-        if row.get("domain") not in GATED_DOMAINS:
+        if row.get("domain") not in BATTLE_DOMAINS:
             continue
         game = game_label_of(row)
         system, user = row["messages"][0]["content"], row["messages"][1]["content"]
@@ -184,10 +280,23 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI wrappe
         base_predict = _hf_predictor(base, None)
         tuned_predict = _hf_predictor(base, args.adapter)
 
+    t0 = time.monotonic()
     base_scores = score_rows(rows, base_predict)
+    t1 = time.monotonic()
     tuned_scores = score_rows(rows, tuned_predict)
-    passed = all(tuned_scores.get(d, 0) >= base_scores.get(d, 0) for d in GATED_DOMAINS)
-    result = {"backend": backend, "base": base_scores, "tuned": tuned_scores, "passed": passed}
+    t2 = time.monotonic()
+    baselines = majority_baselines(rows)
+    passed = gate_passed(base_scores, tuned_scores, baselines)
+    result = {
+        "backend": backend,
+        "adapter": args.model or args.adapter,
+        "base": base_scores,
+        "tuned": tuned_scores,
+        "majority": baselines,
+        "rows": row_counts(rows),
+        "wall_s": {"base": round(t1 - t0, 1), "tuned": round(t2 - t1, 1)},
+        "passed": passed,
+    }
     if args.by_game:
         result["base_by_game"] = score_rows_by_game(rows, base_predict)
         result["tuned_by_game"] = score_rows_by_game(rows, tuned_predict)

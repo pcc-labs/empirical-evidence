@@ -1,0 +1,228 @@
+{
+  "_about": "What the human operator measured and did after the crew handed over a wall. Every entry cites the pokemon-kafka learnings doc or commit that records it; nothing here is recalled game lore. A rule's `match` (or any of a list of matches) must agree on every key it states: map = the map the crew stood on, goal = the leg's target map, failure = the engine's last code (exhaustions), outcome = the leg_end outcome (item/badge hunts), reason_contains = a substring of the leg_end reason. Rules are ordered most specific first.",
+  "resolutions": [
+    {
+      "name": "hm02-fly-route16",
+      "match": [
+        {"map": 27, "outcome": "engaged-no-item", "reason_contains": "HM02"},
+        {"map": 27, "goal": 186, "failure": "no-route"}
+      ],
+      "resolution": {
+        "diagnosis": "HM02 FLY is not on Route 16's road; it is handed over by the body at (2,3) inside the house on map 188, which is reached only from the upper strip of the route. The engine tried the gate's lower doors twenty times and read every door as no-path because the walker stopped on the warp cell instead of pressing into the wall; and the vacated Snorlax sprite slot still reads as a body.",
+        "do": [
+          "Walk east past (26,10) by hand; the sprite slot is empty even though live_bodies lists it.",
+          "CUT the bush at (34,9), tile 0x3D and the only cuttable thing on the map, from (34,10); take the upper road west to (25,4).",
+          "Press INTO the gate from (25,4) to (23,4): route-gate warps fire on the press into the wall, landing on map 186 at (7,2); walk to (1,2), press into (0,2) to land on map 27 at (17,4).",
+          "West to (7,6), press up through the house door (7,5) into map 188; free a bag slot first (the bag was at its 20-stack cap), then talk to (2,3). Verdict by bag growth, 19 to 20."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/fly-won-route16-2026-09-04.md", "pokemon-kafka docs/learnings/engine-gaps-fly-and-seafoam-20260904.md", "pokemon-kafka commit e1e6ef2"]
+    },
+    {
+      "name": "hm03-surf-secret-house",
+      "match": {"goal": [7, 156, 217, 218, 219, 220, 222], "outcome": "engaged-no-item", "reason_contains": "HM03"},
+      "resolution": {
+        "diagnosis": "HM03 SURF is handed over by the body at (3,3) in the Safari Zone Secret House (map 222); Fuchsia, the Safari Center and its rooms 217-220 have no giver. The talk on map 222 looked like a refusal because the bag was at its 20-stack cap and the hand-over silently did nothing.",
+        "do": [
+          "Free a bag slot before the talk (use a booster, store at a Center PC, only then toss); judge the leg by bag growth, not dialogue. HM03 landed on the first talk after make_room.",
+          "Route 220 -> 217 -> 218 -> 219 -> 222: the Safari Center's pond row 9 splits it, so 218's door is in the north half and 219's in the west half; the Safari step limit ejects a long leg to 156, so keep the leg short.",
+          "Teach it to Gyarados (ABLE in the roster; the roster does not scroll, use the raw cursor register) and keep the surfer off the lead on water."
+        ]
+      },
+      "sources": ["pokemon-kafka commit b6807ad", "pokemon-kafka commit 5f89197", "pokemon-kafka docs/learnings/engine-gaps-fly-and-seafoam-20260904.md", "pokemon-kafka docs/learnings/fly-won-route16-2026-09-04.md"]
+    },
+    {
+      "name": "cinnabar-gym-quiz-chain",
+      "match": {"goal": 166, "outcome": "engaged-no-badge"},
+      "resolution": {
+        "diagnosis": "Blaine's gym (map 166) is a quiz chain: the tile 0x4c machines open the room doors, and engaging every body in the entry room never reaches him. The gym door itself opens only with the SECRET KEY from the mansion.",
+        "do": [
+          "Win the SECRET KEY first: the mansion's 3F tile 0x11 drops into 1F's sealed pocket that holds the ball; the 1F switch is a global toggle with two door states.",
+          "Inside the gym answer the 0x4c quiz machines room by room; Blaine stands at (3,3)."
+        ]
+      },
+      "sources": ["pokemon-kafka commit bd333e8", "pokemon-kafka commit 5b4da9a", "pokemon-kafka commit bb980f9"]
+    },
+    {
+      "name": "saffron-gym-guard",
+      "match": {"map": 10, "goal": 178, "failure": "body-blocked"},
+      "resolution": {
+        "diagnosis": "The body at (34,4) in front of Saffron's gym door (34,3) is a script gate, not a trainer: it says 'Get out of the way!', does not battle and does not move. It stands down only after the Silph story beat.",
+        "do": [
+          "Finish Silph Co: the CARD KEY from 5F (210) (21,16), then Giovanni on 11F (235). The guard then says 'We admire your courage.' and the door hop works.",
+          "Do not wait for or talk to the guard again; three engagements did not vary."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badge6-saffron-card-key-gate.md", "pokemon-kafka commit 07a0aca (PR #118)"]
+    },
+    {
+      "name": "sabrina-gym-pads",
+      "match": {"goal": 178, "outcome": "engaged-no-badge"},
+      "resolution": {
+        "diagnosis": "Sabrina's gym (map 178, tileset 22) is a teleport-pad graph with 35 internal warps; the component the door lands in holds bystanders, and engaging every body there is not Sabrina. On a tile-driven floor a planned walk is a category error.",
+        "do": [
+          "Ride the pads: road.rides_to answers which pad lands somewhere that walks to the battle room (surveyed at (12,4)); road.reachable must not count pads as floor.",
+          "Engage the leader only when standing in her component; judge by the badge byte, not by dialogue."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/saffron-floors-topology-20260901.md", "pokemon-kafka docs/learnings/silph-card-key-won.md"]
+    },
+    {
+      "name": "silph-11f-giovanni",
+      "match": {"goal": 235, "outcome": "engaged-no-badge"},
+      "resolution": {
+        "diagnosis": "11F (map 235) is Silph's boss floor: Giovanni is behind the CARD KEY doors, and the leg engaged only the open component. There is no badge to win on this floor; beating him is what makes Saffron's gym guard stand down.",
+        "do": [
+          "Hold the CARD KEY (5F (21,16) via the (27,3) pad ride), open the 11F doors and beat Giovanni.",
+          "Then Saffron's gym door at map 10 (34,3): the guard says 'We admire your courage.'"
+        ]
+      },
+      "sources": ["pokemon-kafka commit 07a0aca (PR #118)", "pokemon-kafka docs/learnings/silph-card-key-won.md"]
+    },
+    {
+      "name": "silph-1f-dead-pad",
+      "match": {"map": 181, "failure": "warp-dead"},
+      "resolution": {
+        "diagnosis": "Silph 1F's pad at (16,10) to 208 is dead; the route planner picks it because the connection graph has no opinion about which doors work.",
+        "do": [
+          "Ban 181->208 and take the live ways up: (26,0) -> 207 or (20,0) -> 236 (the elevator car)."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badge6-saffron-card-key-gate.md"]
+    },
+    {
+      "name": "silph-card-key",
+      "match": {"map": [207, 208, 209, 210, 211, 212, 213, 233, 234, 236]},
+      "resolution": {
+        "diagnosis": "Every Silph wall was ours, not the cartridge's: the CARD KEY sits in the item ball at 5F (210) (21,16); `reachable` counted walks over teleport pads that `walk` refuses, so every 'same pocket, 0 hops' claim was on the wrong number; and a wanderer's small talk ('I heard a kid was wandering around.') at 5F (9,16) had been recorded as a permanent gate on the one tile between 9F's landing and the key. The elevator car (236) has no walkable chain to any floor; floors are entered by pads.",
+        "do": [
+          "Ride the 5F (27,3) pad to 7F and step back: you return standing on (27,3) with (28,3) one step away, walk to the ball at (21,16) and open it (sweep_items want=CARD KEY). Then every 'Darn! It needs a CARD KEY!' door opens on the press.",
+          "Plan inside facilities with road.rides_to / road.ride_pad, and treat a recorded gate as a body's sentence unless the sentence names a key."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/silph-card-key-won.md", "pokemon-kafka docs/learnings/saffron-floors-topology-20260901.md"]
+    },
+    {
+      "name": "route12-corridor-trainer",
+      "match": {"map": 23, "failure": "body-blocked", "goal": [10, 27, 178]},
+      "resolution": {
+        "diagnosis": "Route 12 (map 23) is severed into a south region and a north region joined only by gate house 87; its corridor pinches to the single cell (10,63) and the trainer at (10,62) plugs it. The trainer at (14,76) the leg kept bumping is a bystander.",
+        "do": [
+          "Beat the trainer at (10,62); the corridor opens. Walk column 15 around (14,76).",
+          "The measured road Fuchsia -> Saffron is 7 -> 26 -> 25 -> 24 -> 23 -> gate 87 -> 4 -> 19 -> 10; 23->4 and 19->10 are gate buildings (pass_gate), not edges."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badge6-saffron-card-key-gate.md"]
+    },
+    {
+      "name": "cycling-road-one-way",
+      "match": {"map": 29, "failure": "no-path"},
+      "resolution": {
+        "diagnosis": "Every ledge extracted from this cartridge hops down, left or right; Cycling Road (map 28, 20x144) has no upward ledge, so 29->28 is one-way and the undirected connection table misreports it.",
+        "do": [
+          "Ban 29->28 and route around: 7 -> 26 -> 25 -> 24 -> 23 -> gate 87 -> 4 -> 19 -> 10."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badge6-saffron-card-key-gate.md"]
+    },
+    {
+      "name": "viridian-by-fly",
+      "match": {"goal": 1},
+      "resolution": {
+        "diagnosis": "Viridian (map 1) is not reached by walking west out of Fuchsia's side of the world: map 26 is a pocket (entering at (0,9) traps in rows 8-9) and the Route 12 corridor is plugged by the trainer at (10,62). The chains the engine finds cross water it cannot drive.",
+        "do": [
+          "Win HM02 FLY (Route 16 house, map 188) and Fly to Viridian; badge 8 was reached that way.",
+          "The Viridian gym opens with seven badges; its 0x4c tiles are spinners and 0x3f stops, so solve it as a press graph (217 positions, 856 presses measured). Giovanni is at (2,1)."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badges7-8-baton-region-sealed-20260903.md", "pokemon-kafka commit eae0c5f", "pokemon-kafka commit 4c94882"]
+    },
+    {
+      "name": "route7-gate-to-celadon",
+      "match": {"map": [3, 18], "goal": [6, 28], "failure": "no-route"},
+      "resolution": {
+        "diagnosis": "The hop 18->6 (Route 7 into Celadon) is refused because the west edge opens only on rows 2-3, beyond the gate building: door (18,9) is dead and (18,10) is a threshold warp into gate 76 that fires when stepping LEFT off it. Banning the hop leaves the planner with no chain from Cerulean.",
+        "do": [
+          "Pass the gate: step onto (18,10) and step left into map 76, cross it, and leave on rows 2-3 into Celadon; a --no-consult leg from Saffron crosses cleanly with the gate pass.",
+          "From Celadon, Route 16 (27) is the way to Cycling Road (28) and the Fly house."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/engine-gaps-fly-and-seafoam-20260904.md"]
+    },
+    {
+      "name": "cerulean-pocket-sealed",
+      "match": {"map": [3, 15], "goal": [33, 14, 46, 26, 20, 32], "failure": ["no-route", "no-path"]},
+      "resolution": {
+        "diagnosis": "This baton sits in a sealed pocket (map 3 pocket P0 / map 15 pocket P2) cut off from the rest of the world by the ROM's own tile-pair table: no ledge, gate or bike crosses the seam, and every south/east/west seam row belongs to another pocket. No menu action can fix a baton.",
+        "do": [
+          "Abandon this lineage: continue from the badge-7 batons (b7_*, seafoam_*) whose walkable region touches the seams it needs.",
+          "Before spending a leg from any save, flood-fill the collision grid from the player: walkable() must reach the seam cells of the first hop."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/viridian-badge8-closed-world.md", "pokemon-kafka docs/learnings/route-to-pallet-talk01.md"]
+    },
+    {
+      "name": "route19-surf-crossing",
+      "match": [
+        {"map": 30, "failure": "surfmoved-failed"},
+        {"map": 30, "goal": 8, "failure": "no-route"}
+      ],
+      "resolution": {
+        "diagnosis": "'surfmoved-failed' on 30->31 is three engine gaps stacked, not a sealed world: the planner asks for walkable edge cells and the west edge is water, so no surf plan is ever tried; the only surfer (Gyarados L20) is the auto-battle lead and faints on the crossing wild, after which Gen 1 hides it from the POKeMON menu; and 'No SURFing on GYARADOS here!' is a facing refusal, not a menu defect. Even a clean crossing lands in map 31's rock-maze water (min x 63), which never reaches Cinnabar.",
+        "do": [
+          "Lead a L99+ fighter and keep Gyarados off the lead so the surfer survives every crossing encounter; heal before each water hop.",
+          "Arm SURF with the menu-reading use_field_move('SURF', species='Gyarados') from a land cell that touches edge-reaching water (road.shore_stand), facing the water; read the refusal sentence rather than the failure code.",
+          "Do not take 30 -> 31 -> 8 for Cinnabar: win HM02 FLY and HM03 SURF, Fly to Pallet and surf Route 21 south. Cinnabar (map 8) was reached that way on 2026-09-04."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badge7-8-checkpoint-on-the-water-20260902.md", "pokemon-kafka docs/learnings/surf-is-armed-and-the-water-is-not-a-tile-id.md", "pokemon-kafka docs/learnings/surfer-survival-is-the-whole-blocker-20260902.md", "pokemon-kafka docs/learnings/badges7-8-baton-region-sealed-20260903.md", "pokemon-kafka docs/learnings/engine-gaps-fly-and-seafoam-20260904.md", "pokemon-kafka commit 920b94a"]
+    },
+    {
+      "name": "route20-maze-component",
+      "match": {"map": 31, "failure": "surfmoved-failed"},
+      "resolution": {
+        "diagnosis": "Map 31's water is two components split by the solid row 1: row 0 is the only corridor that reaches Cinnabar at (0,0), and every crossing from map 30 lands in the rows 2-16 maze whose minimum x is 63. From inside the maze no surf reaches Cinnabar, and the route back east needs the launch cell the walker cannot stand on.",
+        "do": [
+          "Stop searching the maze: Cinnabar is Fly -> Pallet -> Route 21 by water (measured 2026-09-04).",
+          "If the goal is Seafoam (192): the dry patch at x 46-61, y 2-11 on map 31 is the islands themselves, doors at (48,5) and (58,9); come ashore on the 0x32 beach at x 62 from Route 20's east end and use the west door."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/badges7-8-baton-region-sealed-20260903.md", "pokemon-kafka docs/learnings/seafoam-is-real-and-so-is-the-door-bug.md", "pokemon-kafka commit 920b94a", "pokemon-kafka commit 5aba259"]
+    },
+    {
+      "name": "seafoam-west-door",
+      "match": {"map": 31, "goal": 192, "failure": "no-route"},
+      "resolution": {
+        "diagnosis": "The east door (58,9) is the one the water reaches from Cinnabar's side, but it lands on B3's wrong side of the current; and a state banked standing on the entrance warp settles back outside on boot, which made a working door look broken.",
+        "do": [
+          "Enter by the west door (48,5) from the 0x32 beach at x 62 (Fly to Fuchsia, Route 19, Route 20's east end); never bank a state standing on a warp tile, step one tile clear first.",
+          "Inside, each floor is several disconnected collision components: choose the door that lands in the component you want, not the nearest door. The legendary gate is B4's (7,11) current, plugged by a boulder dropped down the 1F -> B1 -> B2 hole chain."
+        ]
+      },
+      "sources": ["pokemon-kafka docs/learnings/seafoam-is-real-and-so-is-the-door-bug.md", "pokemon-kafka docs/learnings/seafoam-west-20260903.md", "pokemon-kafka commit 5aba259", "pokemon-kafka commit 74c50ed"]
+    },
+    {
+      "name": "route21-water-drive",
+      "match": {"map": 32, "failure": "surfmoved-failed"},
+      "resolution": {
+        "diagnosis": "Route 21 (map 32) is water end to end; rig.walk is land-only and cannot move a surfer, so a leg that wants a walk plan across it fails at the first surf step whichever way it faces.",
+        "do": [
+          "Arm SURF and drive the water with directional presses (the probe drivers' navigate()), not road.walk; Route 21 was crossed Pallet -> Cinnabar that way on 2026-09-04.",
+          "For Seafoam do not go east from Cinnabar: the only water-reachable door lands on the wrong side. Fly to Fuchsia and enter from Route 20's east end."
+        ]
+      },
+      "sources": ["pokemon-kafka commit 920b94a", "pokemon-kafka commit 5aba259"]
+    },
+    {
+      "name": "route21-from-route4",
+      "match": {"map": 15, "goal": 32},
+      "resolution": {
+        "diagnosis": "Every chain to Route 21 (map 32) ends in water the land walker cannot drive (12 -> 0 -> 32), so the planner reports no route from Route 4.",
+        "do": [
+          "Fly to Pallet (HM02) and surf Route 21 south by directional presses; that is how Cinnabar was reached."
+        ]
+      },
+      "sources": ["pokemon-kafka commit 920b94a", "pokemon-kafka docs/learnings/surfer-survival-is-the-whole-blocker-20260902.md"]
+    }
+  ]
+}
