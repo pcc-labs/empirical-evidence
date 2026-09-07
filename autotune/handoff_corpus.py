@@ -165,6 +165,14 @@ GATES: tuple[tuple[str, str, str], ...] = (
         "else opens the way",
     ),
     (
+        "thirsty_guard",
+        r"on guard duty|I thirsty",
+        "drinks handed to the guard: measured 2026-09-07 (pokemon-kafka probe_saffron_gate), "
+        "every 2- and 3-badge save is refused with this sentence and every save of the lineage "
+        "that holds FRESH WATER passes, its guard saying 'Hi, thanks for the cool drinks!'; the "
+        "hand-over itself has not been performed by a run of ours and no measured shop sells it",
+    ),
+    (
         "stale_window_text",
         r"hope to see you again",
         "not a gate: the shop's farewell left on the sticky window layer; a text box blocks "
