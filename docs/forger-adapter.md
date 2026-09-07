@@ -5,7 +5,7 @@ its sprite picture and the sentence read from the screen, name what it is and wh
 read a refusal sentence as a gate class; take an operator handoff. Everything here is measured from
 runs on the cartridge; no recalled game facts (pokemon-kafka `AGENTS.md`).
 
-## Dataset — `bdougie/pokemon-red-sft` (private)
+## Dataset — [`bdougie/pokemon-red-sft`](https://huggingface.co/datasets/bdougie/pokemon-red-sft)
 
 `data/sft_v5u`, 27,836 rows, 25,053 train / 2,783 valid (seed 42, 10 %). Built as
 `autotune.merge_corpus` of `data/sft_v4` (the 2026-09-05 corpus) and `data/sft_v5`
@@ -35,7 +35,7 @@ Upload: `hf upload bdougie/pokemon-red-sft data/sft_v5u --repo-type dataset`.
 Both are bf16 LoRA r32 (q,k,v,o,gate,up,down) on `HuggingFaceTB/SmolLM3-3B` via
 `autotune.train_sft`, gated by `autotune.eval_heldout` (tuned vs base, and vs the majority label).
 
-### `bdougie/smollm3-pokemon-forger-lora` — Forger only
+### [`bdougie/smollm3-pokemon-forger-lora`](https://huggingface.co/bdougie/smollm3-pokemon-forger-lora) — Forger only
 
 `data/sft_v5_forger` = the npc-dialogue, gate-text and handoff rows of v5u (1,481; 1,333 train,
 148 valid), 3 epochs. Gate on 148 held-out rows:
@@ -49,7 +49,7 @@ Both are bf16 LoRA r32 (q,k,v,o,gate,up,down) on `HuggingFaceTB/SmolLM3-3B` via
 The first Forger adapter (2026-09-05, kept at `out/sft_forger1_2026-09-05`) had body 0.73 and an
 outcome head one row over the majority; the sweep's 470 new dialogue rows are what moved it.
 
-### `bdougie/smollm3-pokemon-red-lora` — all seats
+### [`bdougie/smollm3-pokemon-red-lora`](https://huggingface.co/bdougie/smollm3-pokemon-red-lora) — all seats
 
 Trained on v5u, 900 steps (about 0.6 epoch, 32 min on the 5090). Gate on 2,783 held-out rows:
 
@@ -74,10 +74,9 @@ merges the adapter into the base, converts to GGUF, quantizes Q4_K_M, uploads
 the local Ollama. Then `ollama run pokemon-forger:Q4_K_M`, or point pokemon-kafka's tapes proxy at
 it as a seat model.
 
-**Other machines:** `hf download bdougie/smollm3-pokemon-forger-lora gguf/pokemon-forger.Q4_K_M.gguf`
-(the repo is private: `hf auth login` first) and `ollama create pokemon-forger:Q4_K_M -f Modelfile`
-with `FROM ./pokemon-forger.Q4_K_M.gguf`. If the repo is made public,
-`ollama pull hf.co/bdougie/smollm3-pokemon-forger-lora:Q4_K_M` does it in one line.
+**Other machines:** the repos are public (2026-09-07), so
+`ollama pull hf.co/bdougie/smollm3-pokemon-forger-lora:Q4_K_M` does it in one line; or `hf download` the GGUF and
+`ollama create pokemon-forger:Q4_K_M -f Modelfile` with `FROM ./pokemon-forger.Q4_K_M.gguf`.
 
 Apple Silicon: fuse with mlx-lm as in `docs/serving-forest-lora.md` (the `--adapter-path` flag of
 mlx-lm's server is silently broken; fuse).
