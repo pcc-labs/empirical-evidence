@@ -7,6 +7,9 @@ runs on the cartridge; no recalled game facts (pokemon-kafka `AGENTS.md`).
 
 ## Dataset — [`bdougie/pokemon-red-sft`](https://huggingface.co/datasets/bdougie/pokemon-red-sft)
 
+Current cut `data/sft_v6u` (2026-09-07 late): 28,003 rows, 25,203 train / 2,800 valid; gate-text 101 (thirsty_guard 10, unclassified 8),
+npc-dialogue 1,357. The v5u description below still holds for how it is built.
+
 `data/sft_v5u`, 27,836 rows, 25,053 train / 2,783 valid (seed 42, 10 %). Built as
 `autotune.merge_corpus` of `data/sft_v4` (the 2026-09-05 corpus) and `data/sft_v5`
 (`autotune.convert_telemetry --pk-root ../pokemon-kafka --pk-data ../pokemon-kafka/data/telemetry/game --max-rss-gb 40`,
@@ -37,17 +40,25 @@ Both are bf16 LoRA r32 (q,k,v,o,gate,up,down) on `HuggingFaceTB/SmolLM3-3B` via
 
 ### [`bdougie/smollm3-pokemon-forger-lora`](https://huggingface.co/bdougie/smollm3-pokemon-forger-lora) — Forger only
 
-`data/sft_v5_forger` = the npc-dialogue, gate-text and handoff rows of v5u (1,481; 1,333 train,
-148 valid), 3 epochs. Gate on 148 held-out rows:
+**v6u (2026-09-07 late, the published adapter).** `data/sft_v6_forger` = the npc-dialogue, gate-text and handoff
+rows of v6u (1,539; 1,385 train, 154 valid), 3 epochs. v6u adds the Forger's three seated arcs, the Saffron gate
+house guard (`thirsty_guard`, measured across seven saves) and — new — refused steps whose sentence no class knows,
+labelled `unclassified` (capped at three per sentence), so the seat learns "not one I know, go measure" instead of
+naming the nearest story (the failure lane 33 measured).
 
-| metric | base | tuned | majority |
-|---|---:|---:|---:|
-| npc-dialogue/body | 0.21 | **0.82** | |
-| npc-dialogue/outcome | 0.33 | **0.66** | 0.49 (always "talk") |
-| gate-text/gate | — | **1.00** (4/4) | |
+Two gates, because the question was whether the seat reads sentences or remembers coordinates:
 
-The first Forger adapter (2026-09-05, kept at `out/sft_forger1_2026-09-05`) had body 0.73 and an
-outcome head one row over the majority; the sweep's 470 new dialogue rows are what moved it.
+| split | rows | body base → tuned | outcome base → tuned (majority) | gate base → tuned |
+|---|---:|---|---|---|
+| random (same maps, same runs) | 154 | 0.25 → **0.89** | 0.39 → **0.63** (0.54) | 0.00 → **0.80** (8/10) |
+| by map (29 maps the adapter never saw; a second adapter trained without them) | 370 | 0.22 → **0.90** | 0.39 → **0.64** (0.55) | 0.00 → **0.89** (16/18) |
+
+The by-map numbers match the random ones: the body and gate heads read the sentence. Held-out map list in the
+adapter's `eval.json`; by-map adapter at `out/forger_bymap/sft`, not published.
+
+**v5u (2026-09-07 morning, kept at `out/forger/sft_v5_2026-09-07`):** 148 held-out rows, body 0.21 → 0.82,
+outcome 0.33 → 0.66 vs 0.49, gate 4/4. The first Forger adapter (2026-09-05, `out/sft_forger1_2026-09-05`) had body
+0.73 and an outcome head one row over the majority; the sweep's 470 new dialogue rows are what moved it.
 
 ### [`bdougie/smollm3-pokemon-red-lora`](https://huggingface.co/bdougie/smollm3-pokemon-red-lora) — all seats
 
